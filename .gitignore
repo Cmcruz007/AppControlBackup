@@ -1,3 +1,50 @@
-node_modules/ 
-release/ 
-dist/ 
+﻿# Dependencias
+node_modules/
+
+# Builds y empaquetado
+release/
+release - copia/
+release_old/
+dist/
+out/
+build/
+*.exe
+*.msi
+*.nupkg
+
+# Caches
+.vite/
+.cache/
+*.map
+
+# Dumps y scripts auxiliares
+BackupMonitor_DUMP*.txt
+estructuraprograma.ps1
+
+# Copias de seguridad manuales (ya estan en Git)
+electron/bueno*.cjs
+electron/main - copia*.cjs
+electron/mainold*.cjs
+src/bueno*.tsx
+src/App - copia*.tsx
+src/App - 9JUNIO*.tsx
+src/Appols.tsx
+package - copia.json
+package.jsonOLD
+
+# Locks (opcional, descomentar si no quieres trackearlo)
+# package-lock.json
+
+# Credenciales y datos sensibles
+*.enc
+*.key
+*.pem
+config.enc
+
+# Electron
+LICENSES.chromium.html
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store

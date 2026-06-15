@@ -1,0 +1,3 @@
+1. Que se puedan guardar reglas de VDC y Barracuda.
+
+2. Que funcione su cierre.
