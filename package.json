@@ -1,7 +1,7 @@
 {
   "name": "backup-monitor",
   "version": "1.0.0",
-  "main": "main.cjs",
+  "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite",
     "build": "vite build",

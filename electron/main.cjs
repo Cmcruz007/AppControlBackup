@@ -251,7 +251,7 @@ function createWindow() {
   mainWin.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
     logGraphError('WINDOW_DID_FAIL_LOAD', { errorCode, errorDescription, validatedURL })
   })
-
+  mainWin.once('ready-to-show', () => { mainWin.show() })
   mainWin.on('closed', () => { mainWin = null })
 
   if (process.env.VITE_DEV_SERVER_URL) {
