@@ -138,9 +138,16 @@ function normalizePlannerText(value) {
   } catch (e) { return '' }
 }
 
+function lookupCriticality(jobName, criticalityByJob) {
+  const map = criticalityByJob || {}
+  const name = String(jobName || '').trim().toLowerCase()
+  const foundKey = Object.keys(map).find((k) => k.trim().toLowerCase() === name)
+  return normalizeCriticality(foundKey ? map[foundKey] : 'low')
+}
+
 module.exports = {
   safeLower, normalizeCriticality, normalizeManualStatus, logGraphError,
   normalizeVdcRule, normalizeAs400Rule, includesCI, normalizeVdcRules,
   isValidDate, pad2, toDateOrNull, formatDisplayTime, formatDurationMs,
-  isExcludedJobName, jobBasename, normalizePlannerText,
+  isExcludedJobName, jobBasename, normalizePlannerText, lookupCriticality
 }

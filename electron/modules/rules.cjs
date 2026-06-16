@@ -1,5 +1,5 @@
 // electron/modules/rules.cjs
-const { includesCI, pad2 } = require('./utils.cjs')
+const { includesCI, pad2, lookupCriticality } = require('./utils.cjs')
 const { fetchAs400Attachment } = require('./graph.cjs')
 
 function buildVdcEmailStatus(rule, email) {
@@ -10,8 +10,8 @@ function buildVdcEmailStatus(rule, email) {
   return 'failed'
 }
 
-function evaluateEmailRule(rule, emails, inicio, fin, defaultPrefix) {
-  const inWindow = (Array.isArray(emails) ? emails : [])
+function evaluateEmailRule(rule, emails, inicio, fin, defaultPrefix, criticalityByJob) {  
+const inWindow = (Array.isArray(emails) ? emails : [])
     .filter((m) => {
       const sender = m?.sender?.emailAddress?.address || ''
       const from = m?.from?.emailAddress?.address || ''
@@ -47,11 +47,11 @@ function evaluateEmailRule(rule, emails, inicio, fin, defaultPrefix) {
     status, reason, durationMs: null, durationTrend: null, relaunched: false,
     email: chosen ? { subject: chosen.subject, date: chosen.receivedDateTime } : null,
     allEmails: inWindow.map((e) => ({ subject: e.subject, date: e.receivedDateTime, status: buildVdcEmailStatus(rule, e) })),
-    criticality: 'low', source: 'email', sender: rule.sender,
+    criticality: lookupCriticality(jobName, criticalityByJob), source: 'email', sender: rule.sender,
   }
 }
 
-function evaluateAs400Rule(rule, emails, inicio, fin) {
+function evaluateAs400Rule(rule, emails, inicio, fin, criticalityByJob) {
   const ruleText = `${rule?.title || ''} ${rule?.name || ''} ${rule?.pattern || ''} ${rule?.subjectContains || ''}`.toUpperCase()
   const isWorkdayRule = /\b(PR|RR)\b/.test(ruleText)
   const startDate = inicio instanceof Date ? inicio : new Date(inicio)
@@ -97,26 +97,26 @@ function evaluateAs400Rule(rule, emails, inicio, fin) {
     durationMs: null, durationTrend: null, relaunched: false,
     email: chosen ? { subject: chosen.subject, date: chosen.receivedDateTime } : null,
     allEmails: inWindow.map((e) => ({ subject: e.subject, date: e.receivedDateTime, status: 'success' })),
-    criticality: 'low', source: 'email', notes: rule.notes || '',
+    criticality: lookupCriticality(rule.title || rule.name, criticalityByJob), source: 'email', notes: rule.notes || '',
   }
 }
 
-function buildVdcRows(rules, emails, inicio, fin, defaultSender = '') {
+function buildVdcRows(rules, emails, inicio, fin, defaultSender = '', criticalityByJob = {}) {
   return (Array.isArray(rules) ? rules : [])
     .filter((r) => r.enabled && (r.sender || defaultSender || r.subjectContains))
-    .map((r) => evaluateEmailRule({ ...r, sender: r.sender || defaultSender }, emails, inicio, fin, 'VDC'))
+    .map((r) => evaluateEmailRule({ ...r, sender: r.sender || defaultSender }, emails, inicio, fin, 'VDC', criticalityByJob))
 }
 
-function buildBarracudaRows(rules, emails, inicio, fin, defaultSender = '') {
+function buildBarracudaRows(rules, emails, inicio, fin, defaultSender = '', criticalityByJob = {}) {
   return (Array.isArray(rules) ? rules : [])
     .filter((r) => r.enabled && (r.sender || defaultSender || r.subjectContains))
-    .map((r) => evaluateEmailRule({ ...r, sender: r.sender || defaultSender }, emails, inicio, fin, 'BARRACUDA'))
+   .map((r) => evaluateEmailRule({ ...r, sender: r.sender || defaultSender }, emails, inicio, fin, 'BARRACUDA', criticalityByJob))
 }
 
-async function buildAs400Rows(rules, emails, inicio, fin, cfg) {
+async function buildAs400Rows(rules, emails, inicio, fin, cfg, criticalityByJob = {}) {
   const candidates = (Array.isArray(rules) ? rules : [])
     .filter((r) => { const p = String(r?.subjectContains || r?.pattern || '').trim(); return !!r?.enabled && !!p })
-    .map((r) => evaluateAs400Rule(r, emails, inicio, fin))
+    .map((r) => evaluateAs400Rule(r, emails, inicio, fin, criticalityByJob))
     .filter(Boolean)
 
   await Promise.all(candidates.map(async (row) => {

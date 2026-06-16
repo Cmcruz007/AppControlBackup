@@ -1,5 +1,5 @@
 // electron/modules/engine.cjs
-const { pad2, normalizeCriticality, normalizeManualStatus, isValidDate } = require('./utils.cjs')
+const { pad2, normalizeCriticality, normalizeManualStatus, isValidDate, lookupCriticality } = require('./utils.cjs')
 
 function getOperationalWindow(baseDate = new Date()) {
   const inicio = new Date(baseDate)
@@ -50,9 +50,7 @@ function buildRow(s, emails, ahora, criticalityByJob) {
     fDur = h > 0 ? `${pad2(h)}:${pad2(m)}:${pad2(sec)}` : `${pad2(m)}:${pad2(sec)}`
   }
 
-  const map = criticalityByJob || {}
-  const foundKey = Object.keys(map).find((k) => k.trim().toLowerCase() === jobName.toLowerCase())
-  const criticality = normalizeCriticality(foundKey ? map[foundKey] : 'low')
+  const criticality = lookupCriticality(jobName, criticalityByJob)
 
   return {
     jobId: String(s.job_id || s.id || 'unknown') + '-' + start.getTime(),

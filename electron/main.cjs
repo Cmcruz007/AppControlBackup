@@ -29,9 +29,11 @@ async function buildRefreshPayloadForWindow(cfg, inicio, fin, includeSql = true)
   ])
 
   const { fullRows: sqlFullRows } = processSessions(sessions || [], emails || [], ahora, overrides, criticalityByJob)
-  const vdcRows = buildVdcRows(cfg?.veeamDataCloudRules || [], emails || [], inicio, fin)
-  const barraRows = buildBarracudaRows(cfg?.barracudaRules || [], emails || [], inicio, fin)
-  const as400Rows = await buildAs400Rows(cfg?.as400Rules || [], emails || [], inicio, fin, cfg)
+  const vdcRows = buildVdcRows(cfg?.veeamDataCloudRules || [], emails || [], inicio, fin, '', criticalityByJob)
+  
+const barraRows = buildBarracudaRows(cfg?.barracudaRules || [], emails || [], inicio, fin, '', criticalityByJob)
+  const as400Rows = await buildAs400Rows(cfg?.as400Rules || [], emails || [], inicio, fin, cfg, criticalityByJob)
+
 
   const fullRows = [...sqlFullRows, ...vdcRows, ...barraRows, ...as400Rows]
     .sort((a, b) => new Date(b.nextRun).getTime() - new Date(a.nextRun).getTime())
