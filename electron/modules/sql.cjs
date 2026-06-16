@@ -4,6 +4,7 @@ const { isExcludedJobName, pad2, isValidDate, toDateOrNull, formatDisplayTime, f
 
 let sqlPoolPromise = null
 let sqlPoolKey = null
+let cachedSessionsTable = null
 
 function buildMssqlConfig(sqlCfg) {
   const rawUser = String(sqlCfg?.user || '')
@@ -35,6 +36,7 @@ async function closeCachedSqlPool() {
   const currentPromise = sqlPoolPromise
   sqlPoolPromise = null
   sqlPoolKey = null
+  cachedSessionsTable = null
   if (!currentPromise) return
   try {
     const pool = await currentPromise
@@ -72,6 +74,7 @@ async function withTempSqlPool(sqlCfg, fn) {
 }
 
 async function sqlFindCompatibleSessionsTable(pool) {
+  if (cachedSessionsTable) return cachedSessionsTable
   const candidates = ['Backup.Model.BackupJobSessions', 'Backup.Model.JobSessions', 'BackupJobSessions', 'BSessions']
   const inList = candidates.map((x) => `'${x.replace(/'/g, "''")}'`).join(', ')
 
@@ -94,7 +97,7 @@ async function sqlFindCompatibleSessionsTable(pool) {
   for (const tName of candidates) {
     if (!available.includes(tName)) continue
     const cols = colsByTable.get(tName) || new Set()
-    if (required.every((c) => cols.has(c))) return tName
+    if (required.every((c) => cols.has(c))) { cachedSessionsTable = tName; return tName }
   }
 
   const detail = candidates.filter((t) => available.includes(t))

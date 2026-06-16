@@ -8,7 +8,8 @@
     "build:win": "npm run build && electron-builder --win dir"
   },
   "dependencies": {
-    "mssql": "^10.0.0"
+    "mssql": "^10.0.0",
+    "xlsx-js-style": "^1.2.0"
   },
   "devDependencies": {
     "electron": "^30.0.0",
