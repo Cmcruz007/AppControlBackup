@@ -1,3 +1,13 @@
+// ─── Proxy corporativo (si aplica) ──────────────────────────────────────────
+const proxyUrl = process.env.HTTPS_PROXY || process.env.HTTP_PROXY
+if (proxyUrl) {
+  const { setGlobalDispatcher, ProxyAgent } = require('undici')
+  setGlobalDispatcher(new ProxyAgent(proxyUrl))
+  console.log('[PROXY] Configurado:', proxyUrl)
+}
+
+
+
 // server.js — Express server for BackupMonitor (production 24/7)
 const express = require('express')
 const path = require('path')

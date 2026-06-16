@@ -12,6 +12,7 @@
     "mssql": "^10.0.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
+    "undici": "^8.5.0",
     "xlsx-js-style": "^1.2.0"
   },
   "devDependencies": {
