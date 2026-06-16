@@ -74,14 +74,26 @@ export default function App() {
     api().listJobs().then((res: any) => { if (res?.ok && Array.isArray(res.jobs)) setDbJobs(res.jobs.filter(Boolean)) }).catch(console.error)
     const maybeCleanup = api().onAutoUpdate?.((p: RefreshPayload) => {
       if ((p as any)?.ok) {
-        setRows(((p as any).rows ?? []) as JobRowUi[]); setFullRows(((p as any).fullRows ?? []) as JobRowUi[])
+        setRows(((p as any).rows ?? []) as JobRowUi[])
+        setFullRows(((p as any).fullRows ?? []) as JobRowUi[])
         if ((p as any).ts) setLastRun((p as any).ts)
         if ((p as any).windowStart) setWindowStart((p as any).windowStart)
         if ((p as any).windowEnd) setWindowEnd((p as any).windowEnd)
       } else { refresh() }
     })
+
+    // Polling para modo Express (sin IPC push)
+    let pollingId: ReturnType<typeof setInterval> | null = null
+    if (!api().onAutoUpdate) {
+      pollingId = setInterval(() => refresh(), 5 * 60 * 1000)
+    }
+
     refresh()
-    return () => { if (typeof maybeCleanup === "function") maybeCleanup() }
+
+    return () => {
+      if (typeof maybeCleanup === "function") maybeCleanup()
+      if (pollingId) clearInterval(pollingId)
+    }
   }, [refresh, configPanelOpen, editingJobId, emailModal, logModalData])
 
   useEffect(() => {
