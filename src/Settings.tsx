@@ -1,3 +1,4 @@
+import { api } from "./utils/api"
 import { useEffect, useState } from 'react'
 import type { AppConfig, GraphConfig, SqlConfig } from './types'
 
@@ -55,7 +56,7 @@ export default function Settings({
     setSqlOk(null)
 
     try {
-      const r = await (window as any).api.testSql(sql)
+      const r = await api().testSql(sql)
       setSqlOk(!!r?.ok)
       setSqlTest(r?.ok ? 'Conexión SQL correcta.' : `Error: ${r?.error ?? 'sin detalle'}`)
     } catch (e: any) {
@@ -69,7 +70,7 @@ export default function Settings({
     setGraphOk(null)
 
     try {
-      const r = await (window as any).api.testGraph(graph)
+      const r = await api().testGraph(graph)
       setGraphOk(!!r?.ok)
       setGraphTest(
         r?.ok
@@ -86,7 +87,7 @@ export default function Settings({
     setDiscovery('Listando bases de datos...')
 
     try {
-      const r = await (window as any).api.listDatabases(sql)
+      const r = await api().listDatabases(sql)
       if (!r?.ok) {
         setDiscovery(`Error: ${r?.error ?? 'No se pudieron listar las bases de datos.'}`)
         return
@@ -103,7 +104,7 @@ export default function Settings({
     setDiscovery(`Listando tablas en "${sql.database}"...`)
 
     try {
-      const r = await (window as any).api.listTables(sql)
+      const r = await api().listTables(sql)
       if (!r?.ok) {
         setDiscovery(`Error: ${r?.error ?? 'No se pudieron listar las tablas.'}`)
         return
@@ -180,7 +181,7 @@ export default function Settings({
         pin: pin.trim() || undefined,
       }
 
-      const ok = await (window as any).api.saveConfig(nextCfg)
+      const ok = await api().saveConfig(nextCfg)
       if (!ok) {
         alert('No se pudieron guardar los ajustes.')
         return

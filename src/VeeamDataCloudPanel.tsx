@@ -1,3 +1,4 @@
+import { api } from "./utils/api"
 import { useEffect, useMemo, useState } from 'react'
 import type { AppConfig, VeeamDataCloudRule } from './types'
 
@@ -68,7 +69,7 @@ export default function VeeamDataCloudPanel({
     const nextCfg = { ...config, veeamDataCloudRules: rules }
     
     // Inyección de la configuración completa al backend
-    const ok = await (window as any).api.saveConfig(nextCfg)
+    const ok = await api().saveConfig(nextCfg)
     if (ok) {
       onSaved(nextCfg)
       alert('Veeam Data Cloud guardado correctamente.')

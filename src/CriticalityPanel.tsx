@@ -1,3 +1,4 @@
+import { api } from "./utils/api"
 import { useState, useMemo, useEffect, useCallback } from 'react'
 import type { AppConfig, Criticality } from './types'
 

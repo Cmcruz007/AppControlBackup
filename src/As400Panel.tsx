@@ -1,3 +1,4 @@
+import { api } from "./utils/api"
 import { useEffect, useMemo, useState } from 'react'
 import type { AppConfig, As400Rule } from './types'
 

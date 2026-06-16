@@ -41,6 +41,11 @@ const expressApi: Api = {
     return get(url)
   },
   listJobs: () => get('/api/jobs/list'),
+  testSql: (sqlCfg) => post('/api/test/sql', sqlCfg),
+  testGraph: (graphCfg) => post('/api/test/graph', graphCfg),
+  listDatabases: (sqlCfg) => post('/api/sql/databases', sqlCfg),
+  listTables: (sqlCfg) => post('/api/sql/tables', sqlCfg),
+  listColumns: (sqlCfg, tableName) => post('/api/sql/columns', { sqlCfg, tableName }),
   // En modo Express no hay auto-update push; el frontend puede hacer polling
   onAutoUpdate: undefined,
 }

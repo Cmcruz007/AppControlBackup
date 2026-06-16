@@ -1,3 +1,4 @@
+import { api } from "./utils/api"
 import { useEffect, useMemo, useState } from 'react'
 import type { AppConfig, VeeamDataCloudRule } from './types'
 
@@ -65,7 +66,7 @@ export default function BarracudaPanel({
   async function saveAll() {
     if (!config) return
     const nextCfg = { ...config, barracudaRules: rules }
-    const ok = await (window as any).api.saveConfig(nextCfg)
+    const ok = await api().saveConfig(nextCfg)
     if (ok) {
       onSaved(nextCfg)
       alert('Barracuda guardado correctamente.')

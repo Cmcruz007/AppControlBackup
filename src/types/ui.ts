@@ -72,6 +72,11 @@ export type Api = {
   sendEmail: (payload: any) => Promise<any>
   getJobExecutions: (jobName: string, limit?: number) => Promise<any>
   listJobs: () => Promise<any>
+  testSql: (sqlCfg: any) => Promise<any>
+  testGraph: (graphCfg: any) => Promise<any>
+  listDatabases: (sqlCfg: any) => Promise<any>
+  listTables: (sqlCfg: any) => Promise<any>
+  listColumns: (sqlCfg: any, tableName: string) => Promise<any>
   onAutoUpdate?: (cb: (payload: RefreshPayload) => void) => (() => void) | void
 }
 
