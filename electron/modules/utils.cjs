@@ -1,7 +1,21 @@
 // electron/modules/utils.cjs
-const { app } = require('electron')
 const path = require('path')
 const fs = require('fs')
+
+// Detectar si estamos en Electron o en Express puro
+let electronApp = null
+try {
+  const electron = require('electron')
+  if (electron.app && electron.app.getPath) electronApp = electron.app
+} catch (_) {}
+
+function getDataDir() {
+  if (process.env.BM_DATA_DIR) return process.env.BM_DATA_DIR
+  if (electronApp) return electronApp.getPath('userData')
+  const fallback = path.join(process.cwd(), 'data')
+  if (!fs.existsSync(fallback)) fs.mkdirSync(fallback, { recursive: true })
+  return fallback
+}
 
 function safeLower(value) {
   if (value == null) return ''
@@ -18,7 +32,7 @@ function normalizeManualStatus(value) {
 
 function logGraphError(message, extra = {}) {
   try {
-    const dir = app.getPath('userData')
+    const dir = getDataDir()
     const file = path.join(dir, 'graph-debug.log')
     const line = `[${new Date().toISOString()}] ${message} ${JSON.stringify(extra)}\n`
     fs.appendFileSync(file, line, 'utf8')
@@ -149,5 +163,6 @@ module.exports = {
   safeLower, normalizeCriticality, normalizeManualStatus, logGraphError,
   normalizeVdcRule, normalizeAs400Rule, includesCI, normalizeVdcRules,
   isValidDate, pad2, toDateOrNull, formatDisplayTime, formatDurationMs,
-  isExcludedJobName, jobBasename, normalizePlannerText, lookupCriticality
+  isExcludedJobName, jobBasename, normalizePlannerText, lookupCriticality,
+  getDataDir,
 }
