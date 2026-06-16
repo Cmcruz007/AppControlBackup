@@ -38,8 +38,9 @@ async function closeCachedSqlPool() {
   sqlPoolKey = null
   cachedSessionsTable = null
   if (!currentPromise) return
-  try {
+ try {
     const pool = await currentPromise
+    if (pool?._healthCheck) clearInterval(pool._healthCheck)
     if (pool && (pool.connected || pool.connecting)) await pool.close()
   } catch (_) {}
 }
@@ -54,10 +55,24 @@ async function getSqlPool(sqlCfg) {
       .then((pool) => {
         pool.on('error', async () => {
           if (sqlPoolPromise) {
-            try { const p = await sqlPoolPromise; if (p === pool) { sqlPoolPromise = null; sqlPoolKey = null } }
-            catch (_) { sqlPoolPromise = null; sqlPoolKey = null }
+            try { const p = await sqlPoolPromise; if (p === pool) { sqlPoolPromise = null; sqlPoolKey = null; cachedSessionsTable = null } }
+            catch (_) { sqlPoolPromise = null; sqlPoolKey = null; cachedSessionsTable = null }
           }
         })
+
+        // Ping periódico: verifica que la conexión sigue viva cada 5 minutos
+        pool._healthCheck = setInterval(async () => {
+          try {
+            await pool.request().query('SELECT 1')
+          } catch (_) {
+            clearInterval(pool._healthCheck)
+            sqlPoolPromise = null
+            sqlPoolKey = null
+            cachedSessionsTable = null
+            try { await pool.close() } catch (__) {}
+          }
+        }, 5 * 60 * 1000)
+
         return pool
       })
       .catch((err) => { sqlPoolPromise = null; sqlPoolKey = null; throw err })

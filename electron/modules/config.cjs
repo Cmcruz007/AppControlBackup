@@ -10,6 +10,49 @@ const SHARED_CONFIG_FILE = () =>
 const PRIVATE_KEYS = ['sql', 'graph', 'refreshMinutes', 'toleranceMinutes', 'pin', 'manualOverrides']
 const SHARED_KEYS  = ['criticalityByJob', 'veeamDataCloudRules', 'barracudaRules', 'as400Rules']
 
+function validateConfigInput(cfg) {
+  if (!cfg || typeof cfg !== 'object') return {}
+
+  const clean = {}
+
+  // SQL
+  if (cfg.sql && typeof cfg.sql === 'object') {
+    clean.sql = {
+      host: String(cfg.sql.host || '').trim().slice(0, 255),
+      port: Math.max(1, Math.min(65535, Number(cfg.sql.port) || 1433)),
+      database: String(cfg.sql.database || '').trim().slice(0, 128),
+      user: String(cfg.sql.user || '').trim().slice(0, 128),
+      password: String(cfg.sql.password || ''),
+    }
+  }
+
+  // Graph
+  if (cfg.graph && typeof cfg.graph === 'object') {
+    clean.graph = {
+      tenantId: String(cfg.graph.tenantId || '').trim().slice(0, 128),
+      clientId: String(cfg.graph.clientId || '').trim().slice(0, 128),
+      clientSecret: String(cfg.graph.clientSecret || ''),
+      mailbox: String(cfg.graph.mailbox || '').trim().slice(0, 255),
+      sinceHours: Math.max(1, Math.min(168, Number(cfg.graph.sinceHours) || 24)),
+    }
+  }
+
+  // Escalares
+  if (cfg.refreshMinutes !== undefined) clean.refreshMinutes = Math.max(1, Math.min(1440, Number(cfg.refreshMinutes) || 5))
+  if (cfg.toleranceMinutes !== undefined) clean.toleranceMinutes = Math.max(0, Math.min(1440, Number(cfg.toleranceMinutes) || 0))
+  if (cfg.pin !== undefined) clean.pin = String(cfg.pin || '').slice(0, 10)
+
+  // Objetos pass-through (ya validados en sus paneles)
+  if (cfg.manualOverrides && typeof cfg.manualOverrides === 'object') clean.manualOverrides = cfg.manualOverrides
+  if (cfg.criticalityByJob && typeof cfg.criticalityByJob === 'object') clean.criticalityByJob = cfg.criticalityByJob
+  if (Array.isArray(cfg.veeamDataCloudRules)) clean.veeamDataCloudRules = cfg.veeamDataCloudRules.slice(0, 100)
+  if (Array.isArray(cfg.barracudaRules)) clean.barracudaRules = cfg.barracudaRules.slice(0, 100)
+  if (Array.isArray(cfg.as400Rules)) clean.as400Rules = cfg.as400Rules.slice(0, 100)
+
+  return clean
+}
+
+
 function loadConfig() {
   let priv = {}
   try {
@@ -42,6 +85,7 @@ function loadConfig() {
 }
 
 function saveConfig(cfg) {
+  cfg = validateConfigInput(cfg)
   let oldPriv = {}
   let oldShared = {}
 
@@ -88,4 +132,4 @@ function saveConfig(cfg) {
   return true
 }
 
-module.exports = { PRIVATE_CONFIG_FILE, SHARED_CONFIG_FILE, PRIVATE_KEYS, SHARED_KEYS, loadConfig, saveConfig }
+module.exports = { PRIVATE_CONFIG_FILE, SHARED_CONFIG_FILE, PRIVATE_KEYS, SHARED_KEYS, loadConfig, saveConfig, validateConfigInput }
