@@ -360,7 +360,7 @@ app.get('/api/health', (_req, res) => {
 })
 
 // SPA fallback — todas las rutas no-API devuelven index.html
-app.get('*', (_req, res) => {
+app.get('{*path}', (_req, res) => {
   const indexPath = path.join(distPath, 'index.html')
   if (fs.existsSync(indexPath)) return res.sendFile(indexPath)
   res.status(404).send('Build no encontrado. Ejecuta: npm run build')
