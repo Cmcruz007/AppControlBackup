@@ -80,7 +80,7 @@ function evaluateAs400Rule(rule, emails, inicio, fin, criticalityByJob) {
   let as400LogContent = null
   if (chosen && Array.isArray(chosen.attachments)) {
     const file = chosen.attachments.find((a) => a.name && a.name.toLowerCase().includes('qpquprfil'))
-    if (file && file.contentBytes) as400LogContent = Buffer.from(file.contentBytes, 'base64').toString('utf8')
+    if (file && file.contentBytes) as400LogContent = Buffer.from(file.contentBytes, 'base64').toString('latin1')
   }
 
   const finalDate = chosen?.receivedDateTime ? new Date(chosen.receivedDateTime) : null

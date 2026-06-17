@@ -69,7 +69,7 @@ async function fetchAs400Attachment(cfg, messageId) {
     const attachments = data.value || []
     const file = attachments.find((a) => a.contentType && a.contentType.includes('text'))
       || attachments.find((a) => a.contentBytes)
-    if (file && file.contentBytes) return Buffer.from(file.contentBytes, 'base64').toString('utf8')
+    if (file && file.contentBytes) return Buffer.from(file.contentBytes, 'base64').toString('latin1')
   } catch (e) { logGraphError('AS400_ATTACHMENT_EXCEPTION', { message: e?.message, messageId }) }
   return null
 }
