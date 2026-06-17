@@ -30,8 +30,8 @@ export default function EmailModal({ htmlPreview, day, onClose }: { htmlPreview:
   }
 
   return (
-    <div className="email-modal-overlay" onClick={onClose}>
-      <div className="email-modal-panel" onClick={(e) => e.stopPropagation()}>
+    <div className="email-modal-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
+      <div className="email-modal-panel" >
         <div className="email-modal-header">
           <h2>Enviar Informe {day}</h2>
           <button className="email-modal-close" onClick={onClose}>×</button>
