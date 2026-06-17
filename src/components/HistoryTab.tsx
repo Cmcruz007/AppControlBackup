@@ -123,7 +123,7 @@ export default function HistoryTab({
     if (!currentCfg) return
     const nextOverrides = { ...((currentCfg as any).manualOverrides ?? {}) }
     if (!override) delete nextOverrides[jobName]
-    else nextOverrides[jobName] = { status: normalizeManualStatusUi(override.status), ...(override.comment?.trim() ? { comment: override.comment.trim() } : {}) }
+    else nextOverrides[jobName] = { status: normalizeManualStatusUi(override.status), timestamp: new Date().toISOString(), ...(override.comment?.trim() ? { comment: override.comment.trim() } : {}) }
     const nextCfg = { ...(currentCfg as any), manualOverrides: nextOverrides } as AppConfig
     const ok = await api().saveConfig(nextCfg)
     if (!ok) { alert("No se pudo guardar."); return }

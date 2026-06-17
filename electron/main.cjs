@@ -10,7 +10,7 @@ const { loadConfig, saveConfig } = require('./modules/config.cjs')
 const { closeCachedSqlPool, withTempSqlPool, sqlGetSessionsInRange, sqlGetJobExecutions, sqlGetAvailableDays, sqlGetScheduleJobs, sqlListJobs } = require('./modules/sql.cjs')
 const { getEmails, getEmailsInRange, sendGraphEmail } = require('./modules/graph.cjs')
 const { parseScheduleXml, expandSchedule30, cloneEntriesWithJobName, isBackupCopyJob, findParentJobForCopy, buildPrimaryJobIndex } = require('./modules/schedule.cjs')
-const { getOperationalWindow, processSessions } = require('./modules/engine.cjs')
+const { getOperationalWindow, processSessions, applyManualOverride } = require('./modules/engine.cjs')
 const { buildVdcRows, buildBarracudaRows, buildAs400Rows } = require('./modules/rules.cjs')
 
 // ─── Estado global ──────────────────────────────────────────────────────────
@@ -29,10 +29,10 @@ async function buildRefreshPayloadForWindow(cfg, inicio, fin, includeSql = true)
   ])
 
   const { fullRows: sqlFullRows } = processSessions(sessions || [], emails || [], ahora, overrides, criticalityByJob)
-  const vdcRows = buildVdcRows(cfg?.veeamDataCloudRules || [], emails || [], inicio, fin, '', criticalityByJob)
+  const vdcRows = buildVdcRows(cfg?.veeamDataCloudRules || [], emails || [], inicio, fin, '', criticalityByJob).map(r => applyManualOverride(r, overrides, ahora))
   
-const barraRows = buildBarracudaRows(cfg?.barracudaRules || [], emails || [], inicio, fin, '', criticalityByJob)
-  const as400Rows = await buildAs400Rows(cfg?.as400Rules || [], emails || [], inicio, fin, cfg, criticalityByJob)
+const barraRows = buildBarracudaRows(cfg?.barracudaRules || [], emails || [], inicio, fin, '', criticalityByJob).map(r => applyManualOverride(r, overrides, ahora))
+  const as400Rows = (await buildAs400Rows(cfg?.as400Rules || [], emails || [], inicio, fin, cfg, criticalityByJob)).map(r => applyManualOverride(r, overrides, ahora))
 
 
   const fullRows = [...sqlFullRows, ...vdcRows, ...barraRows, ...as400Rows]

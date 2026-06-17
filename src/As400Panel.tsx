@@ -6,7 +6,6 @@ type Api = {
   saveConfig: (cfg: AppConfig) => Promise<boolean>
 }
 
-const api = () => (window as any).api as Api
 
 function createEmptyRule(): As400Rule {
   return {

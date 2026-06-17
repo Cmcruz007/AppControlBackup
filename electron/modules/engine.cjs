@@ -106,14 +106,7 @@ function applyRelaunchLogic(rows) {
 function applyManualOverride(row, overrides, ahora) {
   if (!overrides) return row
   const ov = overrides[row.jobName]
-  if (!ov || !ov.timestamp) return row
-  const commentDate = new Date(ov.timestamp)
-  if (!Number.isNaN(commentDate.getTime())) {
-    const expiration = new Date(commentDate)
-    expiration.setHours(17, 59, 59, 999)
-    if (commentDate.getHours() >= 18) expiration.setDate(expiration.getDate() + 1)
-    if (ahora > expiration) return row
-  }
+  if (!ov) return row
   const manualStatus = normalizeManualStatus(ov.status)
   return { ...row, ...(manualStatus ? { status: manualStatus } : {}), ...(ov.comment ? { reason: String(ov.comment) } : {}) }
 }

@@ -2,12 +2,10 @@ import { api } from "./utils/api"
 import { useState, useMemo, useEffect, useCallback } from 'react'
 import type { AppConfig, Criticality } from './types'
 
-type Api = {
   getConfig: () => Promise<AppConfig | null>
   saveConfig: (cfg: AppConfig) => Promise<boolean>
 }
 
-const api = () => (window as any).api as Api
 
 const LEVELS: { key: Criticality; label: string; bg: string; color: string; dot: string }[] = [
   { key: 'low',    label: 'BAJA',  bg: '#1e5c3a', color: '#86efac', dot: '#22c55e' },
