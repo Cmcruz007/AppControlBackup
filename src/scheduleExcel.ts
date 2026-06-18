@@ -123,8 +123,8 @@ function makeCell(
   } as any
 }
 
-export async function exportScheduleExcel(): Promise<void> {
-  const res = (await (window as any).api.getSchedule30()) as ScheduleResponse
+export async function exportScheduleExcel(getter: () => Promise<ScheduleResponse>): Promise<void> {
+  const res = await getter()
 
   if (!res?.ok || !res.rows?.length) {
     alert(res?.error ?? 'No hay datos de planificación')
