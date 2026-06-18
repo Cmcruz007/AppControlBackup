@@ -2,9 +2,6 @@ import { api } from "./utils/api"
 import { useEffect, useMemo, useState } from 'react'
 import type { AppConfig, As400Rule } from './types'
 
-type Api = {
-  saveConfig: (cfg: AppConfig) => Promise<boolean>
-}
 
 
 function createEmptyRule(): As400Rule {

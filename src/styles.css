@@ -616,3 +616,87 @@ button:disabled {
 .email-modal-fields input { background: var(--panel-2); border: 1px solid var(--border); color: var(--text); padding: 8px 12px; border-radius: 6px; font-size: 13px; width: 100%; }
 .email-modal-preview { flex: 1; overflow: auto; padding: 20px; background: white; }
 .email-modal-actions { padding: 14px 20px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; }
+
+
+/* ── Version badge ────────────────────────────────────── */
+.version-badge {
+  margin-left: 10px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  background: rgba(96, 165, 250, 0.15);
+  color: #93c5fd;
+  border: 1px solid rgba(96, 165, 250, 0.35);
+  border-radius: 999px;
+  cursor: pointer;
+  vertical-align: middle;
+  transition: all 0.15s ease;
+  font-family: inherit;
+}
+
+.version-badge:hover {
+  background: rgba(96, 165, 250, 0.25);
+  border-color: rgba(96, 165, 250, 0.6);
+  color: #bfdbfe;
+}
+
+/* Changelog modal */
+.changelog-content h1 {
+  font-size: 19px;
+  font-weight: 700;
+  margin: 0 0 10px 0;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+}
+.changelog-content h2 {
+  font-size: 15px;
+  font-weight: 700;
+  margin: 14px 0 6px 0;
+  color: var(--primary);
+}
+.changelog-content h3 {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 10px 0 4px 0;
+  color: #fbbf24;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.changelog-content ul {
+  margin: 4px 0 8px 0;
+  padding-left: 22px;
+}
+.changelog-content li {
+  margin: 1px 0;
+  color: var(--text);
+  line-height: 1.4;
+}
+.changelog-content code {
+  background: rgba(96, 165, 250, 0.15);
+  color: #93c5fd;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+}
+.changelog-content a {
+  color: #60a5fa;
+  text-decoration: none;
+}
+.changelog-content a:hover {
+  text-decoration: underline;
+}
+.changelog-content hr {
+  margin: 12px 0;
+  border: none;
+  border-top: 1px solid var(--border);
+}
+.changelog-content p {
+  margin: 4px 0;
+  color: var(--muted);
+  line-height: 1.4;
+}
+.changelog-content strong {
+  color: var(--text);
+}

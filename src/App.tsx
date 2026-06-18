@@ -15,6 +15,8 @@ import EmailModal from "./components/EmailModal"
 import ExecutionsTab from "./components/ExecutionsTab"
 import ConfigurationPanel from "./components/ConfigurationPanel"
 import HistoryTab from "./components/HistoryTab"
+import VersionModal from "./components/VersionModal"
+import { APP_VERSION } from "./version"
 
 async function handleExportScheduleExcel() {
   try {
@@ -52,6 +54,7 @@ export default function App() {
   const [executionsError, setExecutionsError] = useState<string | null>(null)
   const [dbJobs, setDbJobs] = useState<string[]>([])
   const [logModalData, setLogModalData] = useState<{ jobName: string; content: string } | null>(null)
+  const [versionModalOpen, setVersionModalOpen] = useState(false)
 
   const refresh = useCallback(async () => {
     setLoading(true); setErr(null)
@@ -232,7 +235,7 @@ export default function App() {
   return (
     <div className="app compact-mode">
       <div className="topbar">
-        <h1>Backup Monitor Pro</h1>
+        <h1>Backup Monitor Pro <button className="version-badge" onClick={() => setVersionModalOpen(true)} title="Ver historial de cambios">v{APP_VERSION}</button></h1>
         <div className="meta">{lastRun ? `Actualizado ${new Date(lastRun).toLocaleTimeString("es-ES")}` : "Cargando..."}</div>
       </div>
 
@@ -314,6 +317,8 @@ export default function App() {
       )}
 
       {emailModal && <EmailModal htmlPreview={emailPreviewHtml} day={day} onClose={() => setEmailModal(false)} />}
+
+      {versionModalOpen && <VersionModal onClose={() => setVersionModalOpen(false)} />}
 
       {logModalData && (
         <div className="email-modal-overlay" onClick={() => setLogModalData(null)} style={{ zIndex: 9999 }}>

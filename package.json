@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "express": "^5.2.1",
+    "marked": "^18.0.5",
     "mssql": "^10.0.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",

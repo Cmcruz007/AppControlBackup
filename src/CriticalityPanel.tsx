@@ -2,11 +2,6 @@ import { api } from "./utils/api"
 import { useState, useMemo, useEffect, useCallback } from 'react'
 import type { AppConfig, Criticality } from './types'
 
-  getConfig: () => Promise<AppConfig | null>
-  saveConfig: (cfg: AppConfig) => Promise<boolean>
-}
-
-
 const LEVELS: { key: Criticality; label: string; bg: string; color: string; dot: string }[] = [
   { key: 'low',    label: 'BAJA',  bg: '#1e5c3a', color: '#86efac', dot: '#22c55e' },
   { key: 'medium', label: 'MEDIA', bg: '#5c3a10', color: '#fcd34d', dot: '#f59e0b' },
