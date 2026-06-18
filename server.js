@@ -377,20 +377,55 @@ app.get('{*path}', (_req, res) => {
 })
 
 // ─── Arranque ───────────────────────────────────────────────────────────────
-app.listen(PORT, '0.0.0.0', () => {
-  console.log('='.repeat(60))
-  console.log(`  BackupMonitor Server v1.0`)
-  console.log(`  Puerto: ${PORT}`)
-  console.log(`  Modo: ${isElectron ? 'Electron' : 'Express standalone'}`)
-  console.log(`  Auth: ${AUTH_TOKEN ? 'Token configurado' : 'SIN AUTENTICACION'}`)
-  console.log(`  Dist: ${fs.existsSync(distPath) ? 'OK' : 'NO ENCONTRADO — ejecuta npm run build'}`)
-  console.log('='.repeat(60))
+// HTTPS + HTTP redirect
+const https = require('https')
+const http = require('http')
 
-  // Primer refresh + timer
-  const cfg = loadConfig()
-  startRefreshTimer(cfg?.refreshMinutes)
-  runRefresh()
-})
+const HTTPS_PORT = Number(process.env.BM_HTTPS_PORT) || 443
+const HTTP_REDIRECT_PORT = Number(process.env.BM_HTTP_PORT) || 80
+const pfxPath = process.env.BM_PFX_PATH || path.join(__dirname, 'Certificado', 'DASHBOARD.pfx')
+const pfxPassword = process.env.BM_PFX_PASSWORD || ''
+
+if (fs.existsSync(pfxPath)) {
+  const httpsServer = https.createServer({
+    pfx: fs.readFileSync(pfxPath),
+    passphrase: pfxPassword,
+  }, app)
+
+  httpsServer.listen(HTTPS_PORT, '0.0.0.0', () => {
+    console.log('='.repeat(60))
+    console.log('  BackupMonitor Server v1.0')
+    console.log('  HTTPS: https://dashboard:' + HTTPS_PORT)
+    console.log('  HTTP:  http://dashboard:' + HTTP_REDIRECT_PORT + ' (redirige a HTTPS)')
+    console.log('  Modo: Express + HTTPS')
+    console.log('  Auth: ' + (AUTH_TOKEN ? 'Token configurado' : 'SIN AUTENTICACION'))
+    console.log('='.repeat(60))
+
+    const cfg = loadConfig()
+    startRefreshTimer(cfg?.refreshMinutes)
+    runRefresh()
+  })
+
+  const httpRedirect = http.createServer((req, res) => {
+    const host = (req.headers.host || '').split(':')[0]
+    const target = HTTPS_PORT === 443 ? 'https://' + host + req.url : 'https://' + host + ':' + HTTPS_PORT + req.url
+    res.writeHead(301, { Location: target })
+    res.end()
+  })
+  httpRedirect.listen(HTTP_REDIRECT_PORT, '0.0.0.0', () => {
+    console.log('  Redirect HTTP->HTTPS activo en puerto ' + HTTP_REDIRECT_PORT)
+  })
+} else {
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log('='.repeat(60))
+    console.log('  BackupMonitor Server v1.0')
+    console.log('  HTTP: http://localhost:' + PORT + ' (PFX no encontrado)')
+    console.log('='.repeat(60))
+    const cfg = loadConfig()
+    startRefreshTimer(cfg?.refreshMinutes)
+    runRefresh()
+  })
+}
 
 // Cleanup
 process.on('SIGINT', async () => {
