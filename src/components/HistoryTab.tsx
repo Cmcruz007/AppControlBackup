@@ -46,6 +46,7 @@ export default function HistoryTab({
   const [sortDir, setSortDir] = useState<SortDir>("asc")
   const [editingJobId, setEditingJobId] = useState<string | null>(null)
   const [emailModal, setEmailModal] = useState(false)
+  const [logModalData, setLogModalData] = useState<{ jobName: string; content: string | null } | null>(null)
 
   useEffect(() => {
     setLoadingDays(true)
@@ -184,7 +185,7 @@ export default function HistoryTab({
               <button onClick={exportExcel} style={{ background: "#2563eb", color: "white" }}>Exportar</button>
             </div>
 
-            <JobTable rows={filtered} onEditComment={setEditingJobId} onOpenExecutions={onOpenExecutions} sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+            <JobTable rows={filtered} onEditComment={setEditingJobId} onOpenExecutions={onOpenExecutions} onOpenLog={(jobName) => { const row = histFull.find((r) => r.jobName === jobName); setLogModalData({ jobName, content: (row as any)?.as400LogContent ?? null }) }} sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
           </>
         )}
       </div>
@@ -196,6 +197,22 @@ export default function HistoryTab({
       )}
 
       {emailModal && <EmailModal htmlPreview={emailPreviewHtml} day={day} onClose={() => setEmailModal(false)} />}
+      {logModalData && (
+        <div className="email-modal-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) setLogModalData(null) }} style={{ zIndex: 9999 }}>
+          <div className="email-modal-panel" style={{ maxWidth: 900 }}>
+            <div className="email-modal-header">
+              <h2>LOG AS/400 - {String(logModalData?.jobName || 'Desconocido')}</h2>
+              <button className="email-modal-close" onClick={() => setLogModalData(null)}>×</button>
+            </div>
+            <div style={{ padding: 16, overflowY: 'auto', maxHeight: '65vh' }}>
+              <pre style={{ background: '#000', color: '#0f0', padding: 16, borderRadius: 6, fontFamily: 'monospace', fontSize: 13, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                {logModalData?.content ? String(logModalData.content) : 'No hay contenido o no se pudo extraer.'}
+              </pre>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   )
 }
