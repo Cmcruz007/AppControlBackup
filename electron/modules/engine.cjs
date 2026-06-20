@@ -25,38 +25,50 @@ function buildRow(s, emails, ahora, criticalityByJob) {
   const email = relevantEmails[0]
   const source = email ? 'both' : 'sql'
 
-  let status = 'running', reason = 'En ejecucion'
+ let status = 'running', reason = 'En ejecucion'
 
-const rawEnd = email?.receivedDateTime || s.end_time || s.endtime || s.lastRun
-let puntoFinal = rawEnd ? new Date(rawEnd) : null
-if (puntoFinal && puntoFinal.getFullYear() < 2000) puntoFinal = null
+  const rawEnd = email?.receivedDateTime || s.end_time || s.endtime || s.lastRun
+  let puntoFinal = rawEnd ? new Date(rawEnd) : null
+  if (puntoFinal && puntoFinal.getFullYear() < 2000) puntoFinal = null
 
-if (s.result === 0) {
-  status = 'success'
-  reason = 'Backup correcto'
-}
-else if (s.result === 1) {
-  status = 'warning'
-  reason = email ? 'Aviso Email' : 'Aviso SQL'
-}
-else if (s.result === 2) {
-  status = 'failed'
-  reason = email ? 'Error Email' : 'Error SQL'
-}
-else if (s.result === -1) {
-  if (puntoFinal && !Number.isNaN(puntoFinal.getTime())) {
+  if (s.result === 0) {
     status = 'success'
-    reason = 'Backup continuo (Correcto)'
-  } else {
-    status = 'running'
-    reason = 'En ejecucion'
+    reason = 'Backup correcto'
   }
-}
-else if (puntoFinal) {
-  status = 'warning'
-  reason = `Finalizado sin codigo (cod: ${s.result ?? 'desc'})`
-}
+  else if (s.result === 1) {
+    status = 'warning'
+    reason = email ? 'Aviso Email' : 'Aviso SQL'
+  }
+  else if (s.result === 2) {
+    status = 'failed'
+    reason = email ? 'Error Email' : 'Error SQL'
+  }
+  else if (s.result === -1) {
+    if (puntoFinal && !Number.isNaN(puntoFinal.getTime())) {
+      status = 'success'
+      reason = 'Backup continuo (Correcto)'
+    } else {
+      status = 'running'
 
+      const pct = Number.isFinite(Number(s.progressPct))
+        ? Math.max(0, Math.min(100, Number(s.progressPct)))
+        : null
+
+      if (jobName.toLowerCase().includes('backup configuration job')) {
+        reason = pct !== null
+          ? `Backup de configuración en curso (${pct}%)`
+          : 'Backup de configuración en curso'
+      } else {
+        reason = pct !== null
+          ? `En ejecución (${pct}%)`
+          : 'En ejecucion'
+      }
+    }
+  }
+  else if (puntoFinal) {
+    status = 'warning'
+    reason = `Finalizado sin codigo (cod: ${s.result ?? 'desc'})`
+  }
 
   let durationMs = null
   if (puntoFinal && !Number.isNaN(puntoFinal.getTime())) durationMs = puntoFinal.getTime() - start.getTime()

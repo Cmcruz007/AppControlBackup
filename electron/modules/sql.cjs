@@ -127,30 +127,56 @@ async function sqlGetSessionsInRange(sqlCfg, inicio, fin) {
   req.input('inicio', mssql.DateTime, inicio)
   req.input('fin', mssql.DateTime, fin)
 
-  const result = await req.query(`
-    SELECT s.job_id, s.creation_time, s.end_time, s.result, j.name AS job_name,
-      CASE
-        WHEN prev.prev_duration_sec IS NULL OR prev.prev_duration_sec = 0 OR curr.curr_duration_sec IS NULL THEN 'same'
-        WHEN (curr.curr_duration_sec - prev.prev_duration_sec) * 1.0 / prev.prev_duration_sec > 0.2 THEN 'up'
-        WHEN (curr.curr_duration_sec - prev.prev_duration_sec) * 1.0 / prev.prev_duration_sec < -0.2 THEN 'down'
-        ELSE 'same'
-      END AS durationTrend
-    FROM [dbo].[${tName}] s WITH (NOLOCK)
-    INNER JOIN [dbo].[BJobs] j WITH (NOLOCK) ON j.id = s.job_id
-    OUTER APPLY (
-      SELECT CASE WHEN s.end_time IS NOT NULL AND YEAR(s.end_time) > 2000 AND s.end_time > s.creation_time
-        THEN DATEDIFF(SECOND, s.creation_time, s.end_time) ELSE NULL END AS curr_duration_sec
-    ) curr
-    OUTER APPLY (
-      SELECT TOP 1 DATEDIFF(SECOND, s2.creation_time, s2.end_time) AS prev_duration_sec
-      FROM [dbo].[${tName}] s2 WITH (NOLOCK)
-      WHERE s2.job_id = s.job_id AND s2.creation_time < s.creation_time
-        AND s2.end_time IS NOT NULL AND YEAR(s2.end_time) > 2000 AND s2.end_time > s2.creation_time
-      ORDER BY s2.creation_time DESC
-    ) prev
-    WHERE s.creation_time >= @inicio AND s.creation_time < @fin
-    ORDER BY s.creation_time DESC
-  `)
+ const result = await req.query(`
+  SELECT
+    s.id,
+    s.job_id,
+    s.creation_time,
+    s.end_time,
+    s.result,
+    j.name AS job_name,
+    bjs.processed_size,
+    bjs.total_size,
+    CASE
+      WHEN TRY_CONVERT(decimal(20,2), bjs.total_size) > 0
+      THEN CAST(ROUND(
+        TRY_CONVERT(decimal(20,2), bjs.processed_size) * 100.0
+        / TRY_CONVERT(decimal(20,2), bjs.total_size), 0
+      ) AS int)
+      ELSE NULL
+    END AS progressPct,
+    CASE
+      WHEN prev.prev_duration_sec IS NULL OR prev.prev_duration_sec = 0 OR curr.curr_duration_sec IS NULL THEN 'same'
+      WHEN (curr.curr_duration_sec - prev.prev_duration_sec) * 1.0 / prev.prev_duration_sec > 0.2 THEN 'up'
+      WHEN (curr.curr_duration_sec - prev.prev_duration_sec) * 1.0 / prev.prev_duration_sec < -0.2 THEN 'down'
+      ELSE 'same'
+    END AS durationTrend
+  FROM [dbo].[${tName}] s WITH (NOLOCK)
+  INNER JOIN [dbo].[BJobs] j WITH (NOLOCK)
+    ON j.id = s.job_id
+  LEFT JOIN [dbo].[Backup.Model.BackupJobSessions] bjs WITH (NOLOCK)
+    ON bjs.id = s.id
+  OUTER APPLY (
+    SELECT CASE
+      WHEN s.end_time IS NOT NULL AND YEAR(s.end_time) > 2000 AND s.end_time > s.creation_time
+      THEN DATEDIFF(SECOND, s.creation_time, s.end_time)
+      ELSE NULL
+    END AS curr_duration_sec
+  ) curr
+  OUTER APPLY (
+    SELECT TOP 1 DATEDIFF(SECOND, s2.creation_time, s2.end_time) AS prev_duration_sec
+    FROM [dbo].[${tName}] s2 WITH (NOLOCK)
+    WHERE s2.job_id = s.job_id
+      AND s2.creation_time < s.creation_time
+      AND s2.end_time IS NOT NULL
+      AND YEAR(s2.end_time) > 2000
+      AND s2.end_time > s2.creation_time
+    ORDER BY s2.creation_time DESC
+  ) prev
+  WHERE s.creation_time >= @inicio
+    AND s.creation_time < @fin
+  ORDER BY s.creation_time DESC
+`)
   return (result.recordset || []).filter((r) => !isExcludedJobName(r.job_name))
 }
 
