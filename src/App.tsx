@@ -183,12 +183,23 @@ export default function App() {
       return { rowsCalendario: rows, fullRowsCalendario: fullRows }
     }
 
-    const filtrarJob = (r: JobRowUi) => {
-      if (!r.jobName) return true
-      const name = safeLower(r.jobName)
-      if (name.includes("pr") || name.includes("rr")) return false
-      return true
-    }
+   const filtrarJob = (r: JobRowUi) => {
+  if (!r.jobName) return true
+
+  const name = safeLower(r.jobName)
+
+  // En fin de semana solo ocultamos PR/RR de jobs SQL (Veeam).
+  // NO ocultamos jobs de email (Barracuda, VDC, AS400).
+  if (
+    (r.source === "sql" || r.source === "both") &&
+    (name.includes("pr") || name.includes("rr"))
+  ) {
+    return false
+  }
+
+  return true
+}
+
 
     return {
       rowsCalendario: rows.filter(filtrarJob),
