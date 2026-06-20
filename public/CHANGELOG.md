@@ -2,6 +2,41 @@
 
 ---
 
+## [2.0.0] - 2026-06-20
+
+### ✨ Mejoras
+- 🔒 Migración completa a HTTPS en entorno productivo (acceso seguro mediante certificado interno CA)
+- 🌐 Servidor Express funcionando 24/7 como servicio Windows (NSSM)
+- 🔁 Redirección automática HTTP → HTTPS
+
+### 🐛 Corregido
+- 🐞 Jobs de Barracuda no visibles en "TODOS" durante fin de semana  
+  → causa: filtro por texto (`includes("pr" | "rr")`) afectaba a "Barracuda" y "Sharepoint"
+
+- 🐞 Filtro de fin de semana mejorado  
+  → ahora solo afecta a jobs SQL (Veeam PR/RR)  
+  → NO oculta jobs por email (Barracuda, VDC, AS400)
+
+- 🐞 Error `mac verify failure` en HTTPS  
+  → causa: variables de entorno no cargadas en ejecución manual  
+  → validación correcta del PFX y passphrase
+
+- 🐞 Problemas de routing en Express  
+  → `/api/refresh` devolvía index.html  
+  → orden de middlewares corregido
+
+- 🐞 Error en fallback de rutas (`path-to-regexp`)  
+  → sustituido `app.get('*')` por `app.use(...)`
+
+### 🔧 Interno / Infraestructura
+- ✅ Validación completa del flujo:
+  - Frontend ↔ API ↔ Motor
+- ✅ Separación correcta entre `rows` y `fullRows`
+- ✅ Sistema de refresco y cache estabilizado
+- ✅ Logs y diagnóstico mejorados
+
+---
+
 ## [1.0.2] - 2026-06-20
 
 ### Añadido
