@@ -141,21 +141,24 @@ export default function App() {
   const filtered = useMemo(() => {
     let source = fullRowsCalendario
     if (statusFilter !== "all") {
-      source = source.filter((r) => {
-        if (statusFilter === "running") return r.status === "running" || r.status === "pending"
-        return r.status === statusFilter
-      })
-    } else if (activeCategory !== 'all') {
-      source = source.filter(r => {
-        const name = safeLower(r.jobName || "")
-        if (activeCategory === 'nok') return r.status !== 'success'
-        if (activeCategory === 'veeam') return (r.source === 'sql' || r.source === 'both') && !name.includes('exchange') && !name.includes('sharepoint') && !name.includes('onedrive') && !name.includes('vdc') && !name.includes('barracuda') && !name.includes('as400')
-        if (activeCategory === 'vdc') return name.includes('veeam') && (name.includes('exchange') || name.includes('sharepoint') || name.includes('onedrive') || name.includes('vdc'))
-        if (activeCategory === 'barracuda') return name.includes('barracuda')
-        if (activeCategory === 'as400') return name.includes('as400') || (r.source === 'email' && !name.includes('barracuda') && !name.includes('veeam'))
-        return true
-      })
-    }
+  source = source.filter((r) => {
+    if (statusFilter === "running") return r.status === "running" || r.status === "pending"
+    return r.status === statusFilter
+  })
+}
+
+if (activeCategory !== 'all') {
+  source = source.filter(r => {
+    const name = safeLower(r.jobName || "")
+    if (activeCategory === 'nok') return r.status !== 'success'
+    if (activeCategory === 'veeam') return (r.source === 'sql' || r.source === 'both') && !name.includes('exchange') && !name.includes('sharepoint') && !name.includes('onedrive') && !name.includes('vdc') && !name.includes('barracuda') && !name.includes('as400')
+    if (activeCategory === 'vdc') return name.includes('veeam') && (name.includes('exchange') || name.includes('sharepoint') || name.includes('onedrive') || name.includes('vdc'))
+    if (activeCategory === 'barracuda') return name.includes('barracuda')
+    if (activeCategory === 'as400') return name.includes('as400') || (r.source === 'email' && !name.includes('barracuda') && !name.includes('veeam'))
+    return true
+  })
+}
+
     const base = source.filter((r) => { if (filter && !safeLower(r.jobName).includes(safeLower(filter))) return false; return true })
     const dir = sortDir === "asc" ? 1 : -1
     return [...base].sort((a, b) => {
