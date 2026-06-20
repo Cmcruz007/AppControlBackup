@@ -141,21 +141,35 @@ async function getJobExecutionsFromEmailHistory(cfg, rule, jobName, limit = 200,
 
   const allEmails = await getEmailsInRange(cfg, inicio, fin);
 
-  const senderRule = normalizeText(rule?.sender);
-  const subjectRule = normalizeText(rule?.subjectContains || rule?.title || rule?.name || jobName);
+const senderRule = normalizeText(rule?.sender);
+const subjectRule = normalizeText(rule?.subjectContains || rule?.title || rule?.name || jobName);
 
-  const filtered = (Array.isArray(allEmails) ? allEmails : [])
-    .filter((m) => {
-      const sender =
-        normalizeText(m?.from?.emailAddress?.address) ||
-        normalizeText(m?.sender?.emailAddress?.address);
-      const subject = normalizeText(m?.subject);
+const filtered = (Array.isArray(allEmails) ? allEmails : [])
+  .filter((m) => {
+    const fromAddr = normalizeText(m?.from?.emailAddress?.address);
+    const senderAddr = normalizeText(m?.sender?.emailAddress?.address);
+    const sender = senderAddr || fromAddr;
+    const subject = normalizeText(m?.subject);
 
-      if (senderRule && sender && sender !== senderRule) return false;
-      if (subjectRule && !subject.includes(subjectRule)) return false;
+    const senderOk =
+      !senderRule ||
+      !sender ||
+      sender.includes(senderRule) ||
+      senderRule.includes(sender) ||
+      fromAddr.includes(senderRule) ||
+      senderRule.includes(fromAddr);
 
-      return true;
-    })
+    const isBarracuda =
+      sender.includes('barracuda') ||
+      fromAddr.includes('barracuda');
+
+    const subjectOk =
+      !subjectRule ||
+      subject.includes(subjectRule) ||
+      (isBarracuda && subject.includes('backup report'));
+
+    return senderOk && subjectOk;
+  })
     .sort((a, b) => new Date(b.receivedDateTime).getTime() - new Date(a.receivedDateTime).getTime())
     .slice(0, Number(limit) || 200);
 
