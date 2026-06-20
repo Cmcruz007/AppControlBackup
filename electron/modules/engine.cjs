@@ -143,6 +143,31 @@ function applyManualOverride(row, overrides, ahora) {
   return { ...row, ...(manualStatus ? { status: manualStatus } : {}), ...(ov.comment ? { reason: String(ov.comment) } : {}) }
 }
 
+
+function collapseRunningCopyParents(rows) {
+  const safeRows = Array.isArray(rows) ? rows : [];
+
+  const runningParentsWithChildRunning = new Set(
+    safeRows
+      .filter((r) =>
+        r &&
+        r.status === 'running' &&
+        typeof r.jobName === 'string' &&
+        r.jobName.includes('\\')
+      )
+      .map((r) => String(r.jobName).split('\\')[0].trim())
+      .filter(Boolean)
+  );
+
+  if (!runningParentsWithChildRunning.size) return safeRows;
+
+  return safeRows.filter((r) => {
+    if (!r || r.status !== 'running' || !r.jobName) return true;
+    const name = String(r.jobName).trim();
+    return !runningParentsWithChildRunning.has(name);
+  });
+}
+
 function processSessions(sessions, emails, ahora, overrides, criticalityByJob = {}) {
   const safeSessions = Array.isArray(sessions) ? sessions : []
   const safeEmails = Array.isArray(emails) ? emails : []
@@ -195,7 +220,8 @@ function processSessions(sessions, emails, ahora, overrides, criticalityByJob = 
     return tB - tA
   })
 
-  return { fullRows, filteredRows: fullRows.filter((r) => r && r.status !== 'success') }
+  const dedupedRows = collapseRunningCopyParents(fullRows)
+  return { fullRows: dedupedRows, filteredRows: dedupedRows.filter((r) => r && r.status !== 'success') }
 }
 
 module.exports = { getOperationalWindow, buildRow, calculateDurationTrend, applyRelaunchLogic, applyManualOverride, processSessions }
