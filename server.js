@@ -18,7 +18,7 @@ const crypto = require('crypto')
 const { logGraphError } = require('./electron/modules/utils.cjs')
 const { loadConfig, saveConfig, isElectron } = require('./electron/modules/config.cjs')
 const { closeCachedSqlPool, withTempSqlPool, sqlGetSessionsInRange, sqlGetJobExecutions, sqlGetAvailableDays, sqlGetScheduleJobs, sqlListJobs } = require('./electron/modules/sql.cjs')
-const { getEmails, getEmailsInRange, sendGraphEmail } = require('./electron/modules/graph.cjs')
+const { getEmails, getEmailsInRange, sendGraphEmail, getJobExecutionsFromEmailHistory } = require('./electron/modules/graph.cjs')
 const { parseScheduleXml, expandSchedule30, cloneEntriesWithJobName, isBackupCopyJob, findParentJobForCopy, buildPrimaryJobIndex } = require('./electron/modules/schedule.cjs')
 const { getOperationalWindow, processSessions, applyManualOverride } = require('./electron/modules/engine.cjs')
 const { buildVdcRows, buildBarracudaRows, buildAs400Rows } = require('./electron/modules/rules.cjs')
@@ -335,10 +335,32 @@ app.get('/api/jobs/list', async (_req, res) => {
 
 app.get('/api/jobs/executions/:jobName', async (req, res) => {
   const cfg = loadConfig()
-  if (!cfg?.sql) return res.json({ ok: false, error: 'Falta configuracion SQL.', executions: [] })
   try {
     const jobName = decodeURIComponent(req.params.jobName).trim()
     const limit = Number(req.query.limit) || 200
+
+    // 1) Intentar resolver como job de email (VDC / Barracuda / AS400)
+    const allRules = [
+      ...(Array.isArray(cfg?.veeamDataCloudRules) ? cfg.veeamDataCloudRules : []),
+      ...(Array.isArray(cfg?.barracudaRules) ? cfg.barracudaRules : []),
+      ...(Array.isArray(cfg?.as400Rules) ? cfg.as400Rules : []),
+    ]
+
+    const matchedRule = allRules.find((r) => {
+      const title = String(r?.title || '').trim().toLowerCase()
+      const name = String(r?.name || '').trim().toLowerCase()
+      const target = String(jobName || '').trim().toLowerCase()
+      return target === title || target === name
+    })
+
+    if (matchedRule) {
+      const data = await getJobExecutionsFromEmailHistory(cfg, matchedRule, jobName, limit, 60)
+      return res.json(data)
+    }
+
+    // 2) Si no, resolver como job SQL clásico
+    if (!cfg?.sql) return res.json({ ok: false, error: 'Falta configuracion SQL.', executions: [] })
+
     const data = await sqlGetJobExecutions(cfg.sql, jobName, limit)
     res.json(data)
   } catch (e) {

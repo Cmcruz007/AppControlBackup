@@ -104,4 +104,84 @@ async function sendGraphEmail(cfg, { to, cc, bcc, subject, bodyHtml }) {
   return true
 }
 
-module.exports = { getGraphToken, getEmailsInRange, getEmails, fetchAs400Attachment, sendGraphEmail }
+
+function normalizeText(value) {
+  return String(value || '').toLowerCase();
+}
+
+function inferExecutionStatusFromRule(message, rule) {
+  const haystack = `${message?.subject || ''} ${message?.bodyPreview || ''}`.toLowerCase();
+
+  const successWord = normalizeText(rule?.successWord || rule?.successKeywords);
+  const errorWord = normalizeText(rule?.errorWord || rule?.errorKeywords);
+
+  if (errorWord && haystack.includes(errorWord)) {
+    return { status: 'failed', reason: 'Correo recibido (error detectado)' };
+  }
+
+  if (successWord && haystack.includes(successWord)) {
+    return { status: 'success', reason: 'Correo recibido (éxito detectado)' };
+  }
+
+  // AS400: si llega correo / adjunto, normalmente se considera ejecución válida
+  if (String(rule?.id || '').toLowerCase().startsWith('as400') || message?.hasAttachments) {
+    return { status: 'success', reason: 'Correo recibido' };
+  }
+
+  return { status: 'pending', reason: 'Correo recibido' };
+}
+
+async function getJobExecutionsFromEmailHistory(cfg, rule, jobName, limit = 200, sinceDays = 60) {
+  if (!cfg?.graph?.tenantId) {
+    return { ok: false, error: 'Falta configuración de Microsoft Graph.', executions: [] };
+  }
+
+  const fin = new Date();
+  const inicio = new Date(fin.getTime() - (Number(sinceDays) || 60) * 24 * 60 * 60 * 1000);
+
+  const allEmails = await getEmailsInRange(cfg, inicio, fin);
+
+  const senderRule = normalizeText(rule?.sender);
+  const subjectRule = normalizeText(rule?.subjectContains || rule?.title || rule?.name || jobName);
+
+  const filtered = (Array.isArray(allEmails) ? allEmails : [])
+    .filter((m) => {
+      const sender =
+        normalizeText(m?.from?.emailAddress?.address) ||
+        normalizeText(m?.sender?.emailAddress?.address);
+      const subject = normalizeText(m?.subject);
+
+      if (senderRule && sender && sender !== senderRule) return false;
+      if (subjectRule && !subject.includes(subjectRule)) return false;
+
+      return true;
+    })
+    .sort((a, b) => new Date(b.receivedDateTime).getTime() - new Date(a.receivedDateTime).getTime())
+    .slice(0, Number(limit) || 200);
+
+  const executions = filtered.map((m, index) => {
+    const inferred = inferExecutionStatusFromRule(m, rule);
+    return {
+      id: m.id || `mail-${index}`,
+      start: m.receivedDateTime || null,
+      end: m.receivedDateTime || null,
+      duration: null,
+      status: inferred.status,
+      result: inferred.status,
+      reason: inferred.reason,
+      source: 'email',
+      subject: m.subject || '',
+      bodyPreview: m.bodyPreview || '',
+      hasAttachments: !!m.hasAttachments,
+    };
+  });
+
+  return {
+    ok: true,
+    jobName: jobName || rule?.title || rule?.name || 'Job email',
+    totalExecutions: executions.length,
+    executions,
+  };
+}
+
+module.exports = { getGraphToken, getEmailsInRange, getEmails, fetchAs400Attachment, sendGraphEmail, getJobExecutionsFromEmailHistory }
