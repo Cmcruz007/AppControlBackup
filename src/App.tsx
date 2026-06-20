@@ -139,7 +139,7 @@ export default function App() {
   const { day: displayDay, range: displayRange } = getWindowParts(displayWindowStart, displayWindowEnd)
 
   const filtered = useMemo(() => {
-    let source = showAll ? fullRowsCalendario : rowsCalendario
+    let source = fullRowsCalendario
     if (statusFilter !== "all") {
       source = source.filter((r) => {
         if (statusFilter === "running") return r.status === "running" || r.status === "pending"
