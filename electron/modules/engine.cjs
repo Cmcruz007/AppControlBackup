@@ -26,17 +26,37 @@ function buildRow(s, emails, ahora, criticalityByJob) {
   const source = email ? 'both' : 'sql'
 
   let status = 'running', reason = 'En ejecucion'
-  if (s.result === 0) { status = 'success'; reason = 'Backup correcto' }
-  else if (s.result === 1) { status = 'warning'; reason = email ? 'Aviso Email' : 'Aviso SQL' }
-  else if (s.result === 2) { status = 'failed'; reason = email ? 'Error Email' : 'Error SQL' }
-  else if (s.result === -1) { status = 'success'; reason = 'Backup continuo (Correcto)' }
 
-  const rawEnd = email?.receivedDateTime || s.end_time || s.endtime || s.lastRun
-  let puntoFinal = rawEnd ? new Date(rawEnd) : null
-  if (puntoFinal && puntoFinal.getFullYear() < 2000) puntoFinal = null
-  if (puntoFinal && status === 'running') {
-    status = 'warning'; reason = `Finalizado sin codigo (cod: ${s.result ?? 'desc'})`
+const rawEnd = email?.receivedDateTime || s.end_time || s.endtime || s.lastRun
+let puntoFinal = rawEnd ? new Date(rawEnd) : null
+if (puntoFinal && puntoFinal.getFullYear() < 2000) puntoFinal = null
+
+if (s.result === 0) {
+  status = 'success'
+  reason = 'Backup correcto'
+}
+else if (s.result === 1) {
+  status = 'warning'
+  reason = email ? 'Aviso Email' : 'Aviso SQL'
+}
+else if (s.result === 2) {
+  status = 'failed'
+  reason = email ? 'Error Email' : 'Error SQL'
+}
+else if (s.result === -1) {
+  if (puntoFinal && !Number.isNaN(puntoFinal.getTime())) {
+    status = 'success'
+    reason = 'Backup continuo (Correcto)'
+  } else {
+    status = 'running'
+    reason = 'En ejecucion'
   }
+}
+else if (puntoFinal) {
+  status = 'warning'
+  reason = `Finalizado sin codigo (cod: ${s.result ?? 'desc'})`
+}
+
 
   let durationMs = null
   if (puntoFinal && !Number.isNaN(puntoFinal.getTime())) durationMs = puntoFinal.getTime() - start.getTime()
