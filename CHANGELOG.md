@@ -1,6 +1,35 @@
 # Changelog
 
 ---
+## [2.1] - 2026-06-23
+
+### ✨ Añadido
+- 📧 **S-1: Envío automático de informe diario a las 17:00**
+  - Scheduler robusto con control anti-duplicado (fichero marker persistente)
+  - Endpoint manual de prueba: `POST /api/email/daily-report/test`
+  - Health check ahora incluye `dailyReportLastSent`
+- 🎨 **Diseño del correo automático unificado con el botón Enviar**
+  - Tema oscuro azulado (Backup Monitor Pro)
+  - KPIs grandes con colores (Total / Éxitos / Avisos / Errores / En curso)
+  - Banner verde "TODOS LOS BACKUPS DEL DÍA SON CORRECTOS" / rojo si hay incidencias
+  - % éxito en círculo (cabecera)
+  - Tabla de jobs con badges de estado y criticidad
+- 📩 **Asunto unificado**: "Informe Backup DD DE MES DE AAAA"
+- 👥 **Destinatarios configurables** vía variable de entorno `BM_DAILY_REPORT_TO` (soporta múltiples separados por `;` o `,`)
+- 🔐 **Arranque HTTPS robusto** con logs claros, validación PFX y fallback HTTP
+
+### 🐛 Corregido
+- 🐞 `sendDailyReport` ahora usa `bodyHtml` (firma correcta de `sendGraphEmail`)
+- 🐞 Eliminada función duplicada `sendDailyReport` que usaba `global.lastStatusData` inexistente
+- 🐞 SPA fallback con `app.use()` (evita errores path-to-regexp con `app.get('*')`)
+- 🐞 Importación de `emailBuilder` movida de TypeScript (`src/utils/emailBuilder.ts`) a CommonJS (`electron/modules/emailBuilder.cjs`) para compatibilidad Node
+
+### 🔧 Interno / Infraestructura
+- ✅ Builder HTML compartido y reutilizable (`electron/modules/emailBuilder.cjs`)
+- ✅ Helpers integrados en backend: `escapeHtml`, `safeLower`, `sourceLabel`, `formatLocal`, `formatDuration`, `computeKpis`
+- ✅ Logs `[S-1]` para trazabilidad del scheduler diario
+- ✅ Variable `BM_DAILY_REPORT_TO` documentada en NSSM
+
 
 ## [2.0.0] - 2026-06-20
 
