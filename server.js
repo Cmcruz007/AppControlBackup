@@ -246,12 +246,11 @@ function startRefreshTimer(minutes) {
 async function sendDailyReport() {
   try {
     console.log('[S-1] Generando informe diario...')
+    console.log('[S-1] ENV BM_DAILY_REPORT_TO:', JSON.stringify(process.env.BM_DAILY_REPORT_TO))
 
     if (!lastPayload || !Array.isArray(lastPayload.fullRows)) {
       console.log('[S-1] No hay datos disponibles todavía. Ejecutando refresh previo...')
-
       const payload = await runRefresh()
-
       if (!payload?.ok || !Array.isArray(payload.fullRows)) {
         console.log('[S-1] No se pudo generar informe: no hay payload válido')
         return false
@@ -266,15 +265,19 @@ async function sendDailyReport() {
       return false
     }
 
-    // Destinatarios desde env var o cfg.dailyReport.recipients
     const fromEnv = (process.env.BM_DAILY_REPORT_TO || '').trim()
     const fromCfg = cfg?.dailyReport?.recipients
+
+    console.log('[S-1] fromEnv:', JSON.stringify(fromEnv))
+    console.log('[S-1] fromCfg:', JSON.stringify(fromCfg))
 
     const to = fromEnv
       ? fromEnv
       : Array.isArray(fromCfg)
         ? fromCfg.join(';')
         : String(fromCfg || '').trim()
+
+    console.log('[S-1] to final:', JSON.stringify(to))
 
     if (!to) {
       console.warn('[S-1] No hay destinatarios. Define BM_DAILY_REPORT_TO o cfg.dailyReport.recipients')
@@ -286,6 +289,8 @@ async function sendDailyReport() {
     const bodyHtml = buildEmailHtml(data)
     const subject = `BackupMonitor - Estado diario (${new Date().toLocaleDateString('es-ES')})`
 
+    console.log('[S-1] Llamando a sendGraphEmail...')
+
     await sendGraphEmail(cfg, {
       to,
       subject,
@@ -296,18 +301,14 @@ async function sendDailyReport() {
     return true
   } catch (err) {
     console.error('[S-1] Error enviando correo:', err?.message || err)
-
+    console.error('[S-1] Stack:', err?.stack)
     try {
-      logGraphError('DAILY_REPORT_ERROR', {
-        message: err?.message || String(err),
-      })
-    } catch {
-      // evitar romper por fallo en logging
-    }
-
+      logGraphError('DAILY_REPORT_ERROR', { message: err?.message || String(err) })
+    } catch {}
     return false
   }
 }
+
 function startDailyReportScheduler() {
   console.log('[S-1] Scheduler diario activo a las 17:00')
 
