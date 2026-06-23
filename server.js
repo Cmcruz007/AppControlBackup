@@ -266,11 +266,30 @@ async function sendDailyReport() {
       return false
     }
 
-    const html = buildEmailHtml(data)
+    // Destinatarios desde env var o cfg.dailyReport.recipients
+    const fromEnv = (process.env.BM_DAILY_REPORT_TO || '').trim()
+    const fromCfg = cfg?.dailyReport?.recipients
+
+    const to = fromEnv
+      ? fromEnv
+      : Array.isArray(fromCfg)
+        ? fromCfg.join(';')
+        : String(fromCfg || '').trim()
+
+    if (!to) {
+      console.warn('[S-1] No hay destinatarios. Define BM_DAILY_REPORT_TO o cfg.dailyReport.recipients')
+      return false
+    }
+
+    console.log('[S-1] Destinatarios:', to)
+
+    const bodyHtml = buildEmailHtml(data)
+    const subject = `BackupMonitor - Estado diario (${new Date().toLocaleDateString('es-ES')})`
 
     await sendGraphEmail(cfg, {
-      subject: `BackupMonitor - Estado diario (${new Date().toLocaleDateString('es-ES')})`,
-      html,
+      to,
+      subject,
+      bodyHtml,
     })
 
     console.log('[S-1] Correo enviado correctamente')
@@ -289,7 +308,6 @@ async function sendDailyReport() {
     return false
   }
 }
-
 function startDailyReportScheduler() {
   console.log('[S-1] Scheduler diario activo a las 17:00')
 
