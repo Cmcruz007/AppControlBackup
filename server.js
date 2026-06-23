@@ -287,7 +287,9 @@ async function sendDailyReport() {
     console.log('[S-1] Destinatarios:', to)
 
     const bodyHtml = buildEmailHtml(data)
-    const subject = `BackupMonitor - Estado diario (${new Date().toLocaleDateString('es-ES')})`
+    const subject = `Informe Backup ${new Date().toLocaleDateString('es-ES', {
+  day: '2-digit', month: 'long', year: 'numeric'
+}).toUpperCase()}`
 
     console.log('[S-1] Llamando a sendGraphEmail...')
 
