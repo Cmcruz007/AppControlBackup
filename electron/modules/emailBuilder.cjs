@@ -1,100 +1,5 @@
 // electron/modules/emailBuilder.cjs
-// Builder HTML para el correo diario de BackupMonitor
-
-function buildEmailHtml(payload) {
-  const rows = Array.isArray(payload?.fullRows) ? payload.fullRows : []
-  const total = rows.length
-
-  const ok = rows.filter(r => r.status === 'success').length
-  const ko = rows.filter(r => r.status === 'error').length
-  const warn = rows.filter(r => r.status === 'warning').length
-  const running = rows.filter(r => r.status === 'running').length
-
-  const fecha = new Date().toLocaleString('es-ES')
-
-  const rowsHtml = rows.map(r => {
-    const color =
-      r.status === 'success' ? '#16a34a' :
-      r.status === 'error'   ? '#dc2626' :
-      r.status === 'warning' ? '#f59e0b' :
-      r.status === 'running' ? '#2563eb' : '#6b7280'
-
-    return `
-      <tr>
-        <td style="padding:6px;border-bottom:1px solid #e5e7eb;">${escapeHtml(r.jobName || '-')}</td>
-        <td style="padding:6px;border-bottom:1px solid #e5e7eb;color:${color};font-weight:bold;">
-          ${escapeHtml(r.status || '-')}
-        </td>
-        <td style="padding:6px;border-bottom:1px solid #e5e7eb;">${escapeHtml(r.lastResult || '-')}</td>
-        <td style="padding:6px;border-bottom:1px solid #e5e7eb;">${escapeHtml(r.source || '-')}</td>
-        <td style="padding:6px;border-bottom:1px solid #e5e7eb;">${escapeHtml(r.criticality || '-')}</td>
-        <td style="padding:6px;border-bottom:1px solid #e5e7eb;">${escapeHtml(r.lastRun || '-')}</td>
-      </tr>
-    `
-  }).join('')
-
-  const banner = ko > 0
-    ? `<div style="background:#fee2e2;border:1px solid #dc2626;padding:10px;border-radius:6px;color:#7f1d1d;">
-         ⚠️ Hay <b>${ko}</b> incidencias detectadas en los backups.
-       </div>`
-    : `<div style="background:#dcfce7;border:1px solid #16a34a;padding:10px;border-radius:6px;color:#14532d;">
-         ✅ Todos los backups dentro de parámetros.
-       </div>`
-
-  return `
-  <html>
-    <body style="font-family:Segoe UI, Arial, sans-serif;color:#111;">
-      <h2 style="margin-bottom:0;">BackupMonitor — Estado diario</h2>
-      <div style="color:#6b7280;margin-bottom:16px;">${fecha}</div>
-
-      ${banner}
-
-      <table style="margin:16px 0;border-collapse:collapse;">
-        <tr>
-          <td style="padding:6px 12px;background:#f3f4f6;"><b>Total</b></td>
-          <td style="padding:6px 12px;background:#f3f4f6;">${total}</td>
-        </tr>
-        <tr>
-          <td style="padding:6px 12px;">✅ Éxitos</td>
-          <td style="padding:6px 12px;">${ok}</td>
-        </tr>
-        <tr>
-          <td style="padding:6px 12px;">❌ Errores</td>
-          <td style="padding:6px 12px;">${ko}</td>
-        </tr>
-        <tr>
-          <td style="padding:6px 12px;">⚠️ Advertencias</td>
-          <td style="padding:6px 12px;">${warn}</td>
-        </tr>
-        <tr>
-          <td style="padding:6px 12px;">🔵 En ejecución</td>
-          <td style="padding:6px 12px;">${running}</td>
-        </tr>
-      </table>
-
-      <table style="border-collapse:collapse;width:100%;font-size:13px;">
-        <thead>
-          <tr style="background:#f9fafb;">
-            <th style="text-align:left;padding:6px;border-bottom:2px solid #e5e7eb;">Job</th>
-            <th style="text-align:left;padding:6px;border-bottom:2px solid #e5e7eb;">Estado</th>
-            <th style="text-align:left;padding:6px;border-bottom:2px solid #e5e7eb;">Resultado</th>
-            <th style="text-align:left;padding:6px;border-bottom:2px solid #e5e7eb;">Fuente</th>
-            <th style="text-align:left;padding:6px;border-bottom:2px solid #e5e7eb;">Criticidad</th>
-            <th style="text-align:left;padding:6px;border-bottom:2px solid #e5e7eb;">Última ejecución</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${rowsHtml || `<tr><td colspan="6" style="padding:10px;text-align:center;color:#6b7280;">Sin datos</td></tr>`}
-        </tbody>
-      </table>
-
-      <div style="color:#6b7280;font-size:11px;margin-top:24px;">
-        BackupMonitor v2.0.0 — Informe automático
-      </div>
-    </body>
-  </html>
-  `
-}
+// Builder HTML del correo de BackupMonitor — versión bonita unificada
 
 function escapeHtml(str) {
   return String(str ?? '')
@@ -104,4 +9,267 @@ function escapeHtml(str) {
     .replace(/"/g, '&quot;')
 }
 
-module.exports = { buildEmailHtml }
+function safeLower(s) {
+  return String(s ?? '').toLowerCase()
+}
+
+function sourceLabel(src) {
+  const s = safeLower(src)
+  if (s === 'sql' || s === 'veeam') return 'Veeam (SQL)'
+  if (s === 'vdc') return 'Veeam Data Cloud'
+  if (s === 'barracuda') return 'Barracuda'
+  if (s === 'as400') return 'AS400'
+  if (s === 'email') return 'Email'
+  if (s === 'both') return 'Veeam + Email'
+  return src || '—'
+}
+
+function formatLocal(iso) {
+  if (!iso) return '—'
+  try {
+    const d = new Date(iso)
+    if (isNaN(d.getTime())) return '—'
+    return d.toLocaleString('es-ES', {
+      day: '2-digit', month: '2-digit', year: 'numeric',
+      hour: '2-digit', minute: '2-digit'
+    })
+  } catch {
+    return '—'
+  }
+}
+
+function formatDuration(ms) {
+  if (!ms || ms <= 0) return '—'
+  const totalSec = Math.floor(ms / 1000)
+  const h = Math.floor(totalSec / 3600)
+  const m = Math.floor((totalSec % 3600) / 60)
+  const s = totalSec % 60
+  if (h > 0) return `${h}h ${m}m`
+  if (m > 0) return `${m}m ${s}s`
+  return `${s}s`
+}
+
+function computeKpis(rows) {
+  const r = Array.isArray(rows) ? rows : []
+  const kpis = {
+    total: r.length,
+    success: 0,
+    warning: 0,
+    failed: 0,
+    running: 0,
+    pending: 0,
+  }
+  for (const x of r) {
+    const s = safeLower(x.status)
+    if (s === 'success') kpis.success++
+    else if (s === 'warning') kpis.warning++
+    else if (s === 'failed' || s === 'error') kpis.failed++
+    else if (s === 'running') kpis.running++
+    else if (s === 'pending') kpis.pending++
+  }
+  return kpis
+}
+
+function defaultDay(payload) {
+  try {
+    const d = payload?.windowEnd ? new Date(payload.windowEnd) : new Date()
+    return d.toLocaleDateString('es-ES', {
+      day: '2-digit', month: 'long', year: 'numeric'
+    }).toUpperCase()
+  } catch {
+    return new Date().toLocaleDateString('es-ES')
+  }
+}
+
+function defaultRange(payload) {
+  const ws = payload?.windowStart
+  const we = payload?.windowEnd
+  if (ws && we) {
+    return `Ventana ${formatLocal(ws)} — ${formatLocal(we)}`
+  }
+  return ''
+}
+
+/**
+ * Builder unificado:
+ * - Si recibes el payload completo (objeto con fullRows), úsalo así.
+ * - También acepta firma (rows, kpis, day, range) para compatibilidad con frontend.
+ */
+function buildEmailHtml(payloadOrRows, kpis, day, range) {
+  let rows
+  if (Array.isArray(payloadOrRows)) {
+    rows = payloadOrRows
+  } else if (payloadOrRows && Array.isArray(payloadOrRows.fullRows)) {
+    rows = payloadOrRows.fullRows
+    if (!kpis) kpis = computeKpis(rows)
+    if (!day) day = defaultDay(payloadOrRows)
+    if (!range) range = defaultRange(payloadOrRows)
+  } else {
+    rows = []
+  }
+
+  if (!kpis) kpis = computeKpis(rows)
+  if (!day) day = defaultDay(null)
+  if (!range) range = ''
+
+  const total = kpis.total ?? 0
+  const success = kpis.success ?? 0
+  const warning = kpis.warning ?? 0
+  const failed = kpis.failed ?? 0
+  const running = (kpis.running ?? 0) + (kpis.pending ?? 0)
+
+  const statusOrderFn = (s) =>
+    s === 'failed' ? 0 :
+    s === 'warning' ? 1 :
+    s === 'running' ? 2 :
+    s === 'pending' ? 3 : 4
+
+  const emailRows = [...rows].sort((a, b) => {
+    const aStatus = safeLower(a.status), bStatus = safeLower(b.status)
+    const aIsSuccess = aStatus === 'success', bIsSuccess = bStatus === 'success'
+    if (!aIsSuccess && bIsSuccess) return -1
+    if (aIsSuccess && !bIsSuccess) return 1
+    if (!aIsSuccess && !bIsSuccess) {
+      const diff = statusOrderFn(aStatus) - statusOrderFn(bStatus)
+      if (diff !== 0) return diff
+    }
+    const tA = a.nextRun ? new Date(a.nextRun).getTime() : 0
+    const tB = b.nextRun ? new Date(b.nextRun).getTime() : 0
+    return tA - tB
+  })
+
+  const kpiCards = [
+    { label: 'TOTAL',    value: total,   bg: '1E3A5F', accent: '60A5FA' },
+    { label: 'ÉXITOS',   value: success, bg: '14532D', accent: '4ADE80' },
+    { label: 'AVISOS',   value: warning, bg: '78350F', accent: 'FBBF24' },
+    { label: 'ERRORES',  value: failed,  bg: '7F1D1D', accent: 'F87171' },
+    { label: 'EN CURSO', value: running, bg: '0C4A6E', accent: '38BDF8' },
+  ].map(k => `
+    <td width="20%" style="padding:0 5px">
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#${k.bg}" style="border:2px solid #${k.accent};border-radius:8px">
+        <tr><td align="center" style="padding:14px 10px">
+          <p style="margin:0;color:#${k.accent};font-size:30px;font-weight:800;font-family:Arial,sans-serif;line-height:1">${k.value}</p>
+          <p style="margin:4px 0 0 0;color:#${k.accent};font-size:10px;font-weight:700;font-family:Arial,sans-serif;text-transform:uppercase;letter-spacing:1px">${k.label}</p>
+        </td></tr>
+      </table>
+    </td>`).join('')
+
+  const tableRows = emailRows.map((r, i) => {
+    const bg = i % 2 === 0 ? '0F172A' : '1E293B'
+    const crit = r.criticality === 'high'
+      ? '#ef4444'
+      : r.criticality === 'medium' ? '#f59e0b' : '#22c55e'
+
+    const s = safeLower(r.status)
+    const statusColors = {
+      success: ['166534', '22C55E', 'DCFCE7'],
+      warning: ['854D0E', 'EAB308', 'FEF9C3'],
+      failed:  ['7F1D1D', 'EF4444', 'FECACA'],
+      error:   ['7F1D1D', 'EF4444', 'FECACA'],
+      running: ['075985', '06B6D4', 'E0F2FE'],
+      pending: ['1E3A8A', '3B82F6', 'DBEAFE'],
+    }
+    const sc = statusColors[s] || ['1E293B', '64748B', 'F1F5F9']
+
+    const badge = r.relaunched
+      ? `&nbsp;&nbsp;<span style="background:#422006;color:#fbbf24;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;font-family:Arial,sans-serif;border:1px solid #d97706">↺ Relanzado</span>`
+      : ''
+
+    const durationMs = r.durationMs || r.duration || 0
+    const reason = r.reason || r.lastResult || ''
+
+    return `
+      <tr bgcolor="#${bg}">
+        <td style="padding:10px 12px;border-top:1px solid #1e3a5f;">
+          <table cellpadding="0" cellspacing="0" border="0"><tr><td bgcolor="#${sc[0]}" style="padding:4px 10px;border:1px solid #${sc[1]};border-radius:12px">
+            <span style="color:#${sc[2]};font-size:11px;font-weight:700;font-family:Arial,sans-serif;white-space:nowrap;">${escapeHtml(s.toUpperCase())}</span>
+          </td></tr></table>
+        </td>
+        <td style="padding:10px 12px;border-top:1px solid #1e3a5f;font-size:13px;color:#f1f5f9;font-family:Arial,sans-serif;">
+          <table cellpadding="0" cellspacing="0" border="0"><tr>
+            <td width="14" valign="middle"><span style="display:inline-block;width:10px;height:10px;background:${crit};border-radius:2px;"></span></td>
+            <td valign="middle" style="font-size:13px;color:#f1f5f9;font-family:Arial,sans-serif;">${escapeHtml(r.jobName)}${badge}</td>
+          </tr></table>
+        </td>
+        <td style="padding:10px 12px;border-top:1px solid #1e3a5f;font-size:12px;color:#94a3b8;font-family:Arial,sans-serif;min-width:120px;white-space:nowrap;">${escapeHtml(sourceLabel(r.source))}</td>
+        <td style="padding:10px 12px;border-top:1px solid #1e3a5f;font-size:12px;color:#e2e8f0;font-family:'Courier New',monospace;min-width:140px;white-space:nowrap;">${escapeHtml(formatLocal(r.nextRun))}</td>
+        <td style="padding:10px 12px;border-top:1px solid #1e3a5f;font-size:12px;color:#e2e8f0;font-family:'Courier New',monospace;text-align:center;">${escapeHtml(formatDuration(durationMs))}</td>
+        <td style="padding:10px 12px;border-top:1px solid #1e3a5f;font-size:12px;color:#cbd5e1;font-family:Arial,sans-serif;">${escapeHtml(reason)}</td>
+      </tr>`
+  }).join('')
+
+  const hasIncidents = failed > 0 || warning > 0
+  const bannerBgColor = hasIncidents ? 'DC2626' : '16A34A'
+  const bannerText = hasIncidents
+    ? 'HAY INCIDENCIAS EN EL BACKUP DEL DÍA'
+    : 'TODOS LOS BACKUPS DEL DÍA SON CORRECTOS'
+
+  const pct = total > 0 ? Math.round((success / total) * 100) : 0
+  const pctColor = pct === 100 ? '4ADE80' : pct >= 80 ? 'FBBF24' : 'F87171'
+
+  return `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background-color:#0a0f1e">
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#0a0f1e">
+  <tr><td align="center" style="padding:24px 16px">
+    <table width="820" cellpadding="0" cellspacing="0" border="0" bgcolor="#0f172a" style="border:1px solid #1e3a5f;border-radius:14px;max-width:820px">
+      <tr><td bgcolor="#1e3a5f" style="padding:30px 36px;border-radius:14px 14px 0 0">
+        <table width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+          <td>
+            <p style="margin:0 0 6px 0;color:#60a5fa;font-size:10px;text-transform:uppercase;letter-spacing:2px;font-weight:700;font-family:Arial,sans-serif">🛡 BACKUP MONITOR PRO</p>
+            <p style="margin:0;color:#ffffff;font-size:22px;font-weight:800;font-family:Arial,sans-serif">Informe de Backups</p>
+            <p style="margin:4px 0 0 0;color:#fbbf24;font-size:15px;font-weight:700;font-family:Arial,sans-serif">${escapeHtml(day)}</p>
+            <p style="margin:6px 0 0 0;color:#94a3b8;font-size:11px;font-family:Arial,sans-serif">${escapeHtml(range)}</p>
+          </td>
+          <td align="right" valign="top">
+            <table cellpadding="0" cellspacing="0" border="0"><tr>
+              <td bgcolor="#0f172a" width="64" align="center" style="border:2px solid #${pctColor};border-radius:32px;padding:12px 8px">
+                <p style="margin:0;color:#${pctColor};font-size:18px;font-weight:800;font-family:Arial,sans-serif;line-height:1">${pct}%</p>
+                <p style="margin:2px 0 0 0;color:#94a3b8;font-size:9px;text-transform:uppercase;font-family:Arial,sans-serif">Éxito</p>
+              </td>
+            </tr></table>
+          </td>
+        </tr></table>
+      </td></tr>
+      <tr><td bgcolor="#${bannerBgColor}" style="padding:18px 36px;">
+        <p style="margin:0;color:#ffffff;font-size:18px;font-weight:800;font-family:Arial,sans-serif;text-align:center;">${bannerText}</p>
+      </td></tr>
+      <tr><td bgcolor="#0a0f1e" style="padding:24px 36px;">
+        <table cellpadding="0" cellspacing="0" border="0" width="100%"><tr>${kpiCards}</tr></table>
+      </td></tr>
+      <tr><td style="padding:24px 36px">
+        <p style="margin:0 0 12px 0;color:#94a3b8;font-size:10px;text-transform:uppercase;letter-spacing:1.5px;font-weight:700;font-family:Arial,sans-serif">DETALLE DE JOBS</p>
+        <table width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#0f172a" style="border:1px solid #1e3a5f;border-radius:8px">
+          <thead><tr bgcolor="#1e3a5f">
+            <th align="left" style="padding:11px 12px;color:#60a5fa;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;font-family:Arial,sans-serif;white-space:nowrap">Estado</th>
+            <th align="left" style="padding:11px 12px;color:#60a5fa;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;font-family:Arial,sans-serif">Job</th>
+            <th align="left" style="padding:11px 12px;color:#60a5fa;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;font-family:Arial,sans-serif;white-space:nowrap">Fuente</th>
+            <th align="left" style="padding:11px 12px;color:#60a5fa;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;font-family:Arial,sans-serif;white-space:nowrap">Inicio</th>
+            <th align="center" style="padding:11px 12px;color:#60a5fa;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;font-family:Arial,sans-serif">Dur.</th>
+            <th align="left" style="padding:11px 12px;color:#60a5fa;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;font-family:Arial,sans-serif">Detalle</th>
+          </tr></thead>
+          <tbody>${tableRows}</tbody>
+        </table>
+      </td></tr>
+      <tr><td bgcolor="#0a0f1e" style="padding:16px 36px;border-top:1px solid #1e3a5f;border-radius:0 0 14px 14px">
+        <table width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+          <td style="color:#475569;font-size:11px;font-family:Arial,sans-serif">Generado automáticamente · Backup Monitor Pro</td>
+          <td align="right" style="color:#475569;font-size:11px;font-family:Arial,sans-serif">${escapeHtml(new Date().toLocaleString('es-ES'))}</td>
+        </tr></table>
+      </td></tr>
+    </table>
+  </td></tr>
+  </table>
+</body></html>`
+}
+
+module.exports = {
+  buildEmailHtml,
+  escapeHtml,
+  safeLower,
+  sourceLabel,
+  formatLocal,
+  formatDuration,
+  computeKpis,
+}
