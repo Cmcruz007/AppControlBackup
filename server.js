@@ -1,3 +1,5 @@
+const { buildEmailHtml } = require('./electron/modules/emailBuilder.cjs')
+
 // ─── Proxy corporativo (si aplica) ──────────────────────────────────────────
 const proxyUrl = process.env.HTTPS_PROXY || process.env.HTTP_PROXY
 if (proxyUrl) {
