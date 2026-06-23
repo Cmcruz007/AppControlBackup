@@ -1,33 +1,72 @@
 const { buildEmailHtml } = require('./electron/modules/emailBuilder.cjs')
-
-// ─── Proxy corporativo (si aplica) ──────────────────────────────────────────
 const proxyUrl = process.env.HTTPS_PROXY || process.env.HTTP_PROXY
+
+const express = require('express')
+const path = require('path')
+const fs = require('fs')
+const crypto = require('crypto')
+const https = require('https')
+const http = require('http')
+
+const { logGraphError } = require('./electron/modules/utils.cjs')
+const { loadConfig, saveConfig, isElectron } = require('./electron/modules/config.cjs')
+const {
+  closeCachedSqlPool,
+  withTempSqlPool,
+  sqlGetSessionsInRange,
+  sqlGetJobExecutions,
+  sqlGetAvailableDays,
+  sqlGetScheduleJobs,
+  sqlListJobs,
+} = require('./electron/modules/sql.cjs')
+
+const {
+  getEmails,
+  getEmailsInRange,
+  sendGraphEmail,
+  getJobExecutionsFromEmailHistory,
+} = require('./electron/modules/graph.cjs')
+
+const {
+  parseScheduleXml,
+  expandSchedule30,
+  cloneEntriesWithJobName,
+  isBackupCopyJob,
+  findParentJobForCopy,
+  buildPrimaryJobIndex,
+} = require('./electron/modules/schedule.cjs')
+
+const {
+  getOperationalWindow,
+  processSessions,
+  applyManualOverride,
+} = require('./electron/modules/engine.cjs')
+
+const {
+  buildVdcRows,
+  buildBarracudaRows,
+  buildAs400Rows,
+} = require('./electron/modules/rules.cjs')
+
+// ─── Proxy corporativo ──────────────────────────────────────────────────────
+
 if (proxyUrl) {
   const { setGlobalDispatcher, ProxyAgent } = require('undici')
   setGlobalDispatcher(new ProxyAgent(proxyUrl))
   console.log('[PROXY] Configurado:', proxyUrl)
 }
 
-
-
-// server.js — Express server for BackupMonitor (production 24/7)
-const express = require('express')
-const path = require('path')
-const fs = require('fs')
-const crypto = require('crypto')
-
-// ─── Módulos backend (reutilizados del motor Electron) ──────────────────────
-const { logGraphError } = require('./electron/modules/utils.cjs')
-const { loadConfig, saveConfig, isElectron } = require('./electron/modules/config.cjs')
-const { closeCachedSqlPool, withTempSqlPool, sqlGetSessionsInRange, sqlGetJobExecutions, sqlGetAvailableDays, sqlGetScheduleJobs, sqlListJobs } = require('./electron/modules/sql.cjs')
-const { getEmails, getEmailsInRange, sendGraphEmail, getJobExecutionsFromEmailHistory } = require('./electron/modules/graph.cjs')
-const { parseScheduleXml, expandSchedule30, cloneEntriesWithJobName, isBackupCopyJob, findParentJobForCopy, buildPrimaryJobIndex } = require('./electron/modules/schedule.cjs')
-const { getOperationalWindow, processSessions, applyManualOverride } = require('./electron/modules/engine.cjs')
-const { buildVdcRows, buildBarracudaRows, buildAs400Rows } = require('./electron/modules/rules.cjs')
+// server.js — Express server for BackupMonitor production 24/7
 
 // ─── Configuración ──────────────────────────────────────────────────────────
+
 const PORT = Number(process.env.BM_PORT) || 3100
 const AUTH_TOKEN = process.env.BM_AUTH_TOKEN || ''
+
+const HTTPS_PORT = Number(process.env.BM_HTTPS_PORT) || 443
+const HTTP_REDIRECT_PORT = Number(process.env.BM_HTTP_PORT) || 80
+const pfxPath = process.env.BM_PFX_PATH || path.join(__dirname, 'Certificado', 'DASHBOARD.pfx')
+const pfxPassword = process.env.BM_PFX_PASSWORD || ''
 
 if (!AUTH_TOKEN) {
   console.warn('⚠️  BM_AUTH_TOKEN no definido. La API NO tiene autenticacion.')
@@ -35,11 +74,42 @@ if (!AUTH_TOKEN) {
 }
 
 // ─── Estado global ──────────────────────────────────────────────────────────
+
 let lastPayload = null
 let lastRefreshTime = null
 let refreshIntervalId = null
 
-// ─── Motor de refresco (idéntico al de main.cjs) ───────────────────────────
+let dailyReportRunning = false
+const dailyReportMarkerPath = path.join(__dirname, 'daily-report-last-sent.txt')
+
+// ─── Utilidades ─────────────────────────────────────────────────────────────
+
+function getLocalDateKey(d = new Date()) {
+  const yyyy = d.getFullYear()
+  const mm = String(d.getMonth() + 1).padStart(2, '0')
+  const dd = String(d.getDate()).padStart(2, '0')
+  return `${yyyy}-${mm}-${dd}`
+}
+
+function getLastDailyReportDate() {
+  try {
+    if (!fs.existsSync(dailyReportMarkerPath)) return null
+    return fs.readFileSync(dailyReportMarkerPath, 'utf8').trim() || null
+  } catch {
+    return null
+  }
+}
+
+function setLastDailyReportDate(dateKey) {
+  try {
+    fs.writeFileSync(dailyReportMarkerPath, dateKey, 'utf8')
+  } catch (err) {
+    console.error('[S-1] No se pudo guardar marca diaria:', err?.message || err)
+  }
+}
+
+// ─── Motor de refresco ──────────────────────────────────────────────────────
+
 async function buildRefreshPayloadForWindow(cfg, inicio, fin, includeSql = true) {
   const ahora = new Date()
   const overrides = cfg?.manualOverrides || {}
@@ -50,10 +120,42 @@ async function buildRefreshPayloadForWindow(cfg, inicio, fin, includeSql = true)
     includeSql && cfg?.sql ? sqlGetSessionsInRange(cfg.sql, inicio, fin) : Promise.resolve([]),
   ])
 
-  const { fullRows: sqlFullRows } = processSessions(sessions || [], emails || [], ahora, overrides, criticalityByJob)
-  const vdcRows = buildVdcRows(cfg?.veeamDataCloudRules || [], emails || [], inicio, fin, '', criticalityByJob).map(r => applyManualOverride(r, overrides, ahora))
-  const barraRows = buildBarracudaRows(cfg?.barracudaRules || [], emails || [], inicio, fin, '', criticalityByJob).map(r => applyManualOverride(r, overrides, ahora))
-  const as400Rows = (await buildAs400Rows(cfg?.as400Rules || [], emails || [], inicio, fin, cfg, criticalityByJob)).map(r => applyManualOverride(r, overrides, ahora))
+  const { fullRows: sqlFullRows } = processSessions(
+    sessions || [],
+    emails || [],
+    ahora,
+    overrides,
+    criticalityByJob
+  )
+
+  const vdcRows = buildVdcRows(
+    cfg?.veeamDataCloudRules || [],
+    emails || [],
+    inicio,
+    fin,
+    '',
+    criticalityByJob
+  ).map(r => applyManualOverride(r, overrides, ahora))
+
+  const barraRows = buildBarracudaRows(
+    cfg?.barracudaRules || [],
+    emails || [],
+    inicio,
+    fin,
+    '',
+    criticalityByJob
+  ).map(r => applyManualOverride(r, overrides, ahora))
+
+  const as400Rows = (
+    await buildAs400Rows(
+      cfg?.as400Rules || [],
+      emails || [],
+      inicio,
+      fin,
+      cfg,
+      criticalityByJob
+    )
+  ).map(r => applyManualOverride(r, overrides, ahora))
 
   const fullRows = [...sqlFullRows, ...vdcRows, ...barraRows, ...as400Rows]
     .sort((a, b) => new Date(b.nextRun).getTime() - new Date(a.nextRun).getTime())
@@ -89,25 +191,42 @@ async function runRefresh() {
     try {
       const jsonPath = process.env.BM_JSON_EXPORT_PATH || 'C:\\DashboardBackups\\backup_status.json'
       const folderPath = path.dirname(jsonPath)
-      if (!fs.existsSync(folderPath)) fs.mkdirSync(folderPath, { recursive: true })
+
+      if (!fs.existsSync(folderPath)) {
+        fs.mkdirSync(folderPath, { recursive: true })
+      }
 
       const datosParaMovil = payload.fullRows.map(r => ({
-        backup_policy_name: r.jobName, status: r.status, result: r.lastResult,
-        creation_time: r.nextRun, end_time: r.lastRun, duration: r.duration,
-        reason: r.reason, criticality: r.criticality, source: r.source,
+        backup_policy_name: r.jobName,
+        status: r.status,
+        result: r.lastResult,
+        creation_time: r.nextRun,
+        end_time: r.lastRun,
+        duration: r.duration,
+        reason: r.reason,
+        criticality: r.criticality,
+        source: r.source,
       }))
 
       fs.writeFileSync(jsonPath, JSON.stringify(datosParaMovil, null, 4), 'utf8')
-      fs.writeFileSync(path.join(folderPath, 'motor_status.txt'),
-        `Ultimo refresco correcto: ${new Date().toLocaleString()}`, 'utf8')
+      fs.writeFileSync(
+        path.join(folderPath, 'motor_status.txt'),
+        `Ultimo refresco correcto: ${new Date().toLocaleString()}`,
+        'utf8'
+      )
     } catch (exportErr) {
-      logGraphError('JSON_EXPORT_ERROR', { message: exportErr?.message || String(exportErr) })
+      logGraphError('JSON_EXPORT_ERROR', {
+        message: exportErr?.message || String(exportErr),
+      })
     }
 
     console.log(`[REFRESH] OK — ${payload.fullRows.length} jobs, ${new Date().toLocaleTimeString()}`)
     return payload
   } catch (e) {
-    logGraphError('RUN_REFRESH_ERROR', { message: e?.message || String(e) })
+    logGraphError('RUN_REFRESH_ERROR', {
+      message: e?.message || String(e),
+    })
+
     console.error('[REFRESH] ERROR:', e.message)
     return { ok: false, error: e.message }
   }
@@ -115,17 +234,99 @@ async function runRefresh() {
 
 function startRefreshTimer(minutes) {
   if (refreshIntervalId) clearInterval(refreshIntervalId)
+
   const ms = Math.max(1, Number(minutes ?? 5)) * 60 * 1000
   refreshIntervalId = setInterval(() => runRefresh(), ms)
+
   console.log(`[TIMER] Refresh cada ${Math.round(ms / 60000)} minutos`)
 }
 
+// ─── S-1: Envio automatico diario ───────────────────────────────────────────
+
+async function sendDailyReport() {
+  try {
+    console.log('[S-1] Generando informe diario...')
+
+    if (!lastPayload || !Array.isArray(lastPayload.fullRows)) {
+      console.log('[S-1] No hay datos disponibles todavía. Ejecutando refresh previo...')
+
+      const payload = await runRefresh()
+
+      if (!payload?.ok || !Array.isArray(payload.fullRows)) {
+        console.log('[S-1] No se pudo generar informe: no hay payload válido')
+        return false
+      }
+    }
+
+    const cfg = loadConfig()
+    const data = lastPayload
+
+    if (!data || !Array.isArray(data.fullRows)) {
+      console.log('[S-1] Payload no válido después del refresh')
+      return false
+    }
+
+    const html = buildEmailHtml(data)
+
+    await sendGraphEmail(cfg, {
+      subject: `BackupMonitor - Estado diario (${new Date().toLocaleDateString('es-ES')})`,
+      html,
+    })
+
+    console.log('[S-1] Correo enviado correctamente')
+    return true
+  } catch (err) {
+    console.error('[S-1] Error enviando correo:', err?.message || err)
+
+    try {
+      logGraphError('DAILY_REPORT_ERROR', {
+        message: err?.message || String(err),
+      })
+    } catch {
+      // evitar romper por fallo en logging
+    }
+
+    return false
+  }
+}
+
+function startDailyReportScheduler() {
+  console.log('[S-1] Scheduler diario activo a las 17:00')
+
+  setInterval(() => {
+    const now = new Date()
+    const today = getLocalDateKey(now)
+    const lastSentDate = getLastDailyReportDate()
+
+    if (now.getHours() !== 17 || now.getMinutes() !== 0) return
+    if (dailyReportRunning) return
+    if (lastSentDate === today) {
+      console.log('[S-1] Informe diario ya enviado hoy:', today)
+      return
+    }
+
+    dailyReportRunning = true
+
+    sendDailyReport()
+      .then((ok) => {
+        if (ok) {
+          setLastDailyReportDate(today)
+        }
+      })
+      .finally(() => {
+        dailyReportRunning = false
+      })
+  }, 60000)
+}
+
 // ─── Express App ────────────────────────────────────────────────────────────
+
 const app = express()
 app.use(express.json({ limit: '2mb' }))
 
 // Servir React SPA desde dist/
 const distPath = path.join(__dirname, 'dist')
+
 if (fs.existsSync(distPath)) {
   app.use(express.static(distPath))
 } else {
@@ -133,15 +334,16 @@ if (fs.existsSync(distPath)) {
 }
 
 // ─── Middleware de autenticación ────────────────────────────────────────────
+
 function authMiddleware(req, res, next) {
-  // Si no hay token configurado, permitir todo (modo desarrollo)
   if (!AUTH_TOKEN) return next()
 
-  // Permitir acceso sin token a archivos estáticos (la SPA)
   if (!req.path.startsWith('/api/')) return next()
 
   const header = req.headers.authorization || ''
-  const token = header.startsWith('Bearer ') ? header.slice(7) : req.query?.token || ''
+  const token = header.startsWith('Bearer ')
+    ? header.slice(7)
+    : req.query?.token || ''
 
   if (token === AUTH_TOKEN) return next()
 
@@ -152,10 +354,19 @@ app.use(authMiddleware)
 
 // ─── API Endpoints ──────────────────────────────────────────────────────────
 
-// Estado actual (lo que el dashboard consume)
+// Estado actual
 app.get('/api/status', (_req, res) => {
-  if (!lastPayload) return res.json({ ok: false, error: 'Aun no hay datos. Esperando primer refresh.' })
-  res.json({ ...lastPayload, lastRefreshTime })
+  if (!lastPayload) {
+    return res.json({
+      ok: false,
+      error: 'Aun no hay datos. Esperando primer refresh.',
+    })
+  }
+
+  res.json({
+    ...lastPayload,
+    lastRefreshTime,
+  })
 })
 
 // Forzar refresh manual
@@ -164,7 +375,10 @@ app.post('/api/refresh', async (_req, res) => {
     const payload = await runRefresh()
     res.json(payload)
   } catch (e) {
-    res.status(500).json({ ok: false, error: e.message })
+    res.status(500).json({
+      ok: false,
+      error: e.message,
+    })
   }
 })
 
@@ -174,39 +388,56 @@ app.get('/api/config', (_req, res) => {
     const cfg = loadConfig() || {}
     res.json(cfg)
   } catch (e) {
-    res.status(500).json({ ok: false, error: e.message })
+    res.status(500).json({
+      ok: false,
+      error: e.message,
+    })
   }
 })
 
 app.post('/api/config', (req, res) => {
   try {
     const ok = saveConfig(req.body || {})
+
     if (ok) {
       const cfg = loadConfig()
       startRefreshTimer(cfg?.refreshMinutes)
     }
+
     res.json({ ok })
   } catch (e) {
-    res.status(500).json({ ok: false, error: e.message })
+    res.status(500).json({
+      ok: false,
+      error: e.message,
+    })
   }
 })
 
-// SQL Tests
+// SQL tests
 app.post('/api/test/sql', async (req, res) => {
   try {
     await withTempSqlPool(req.body, async () => true)
     res.json({ ok: true })
   } catch (e) {
-    res.json({ ok: false, error: e.message })
+    res.json({
+      ok: false,
+      error: e.message,
+    })
   }
 })
 
 app.post('/api/test/graph', async (req, res) => {
   try {
     const emails = await getEmails({ graph: req.body })
-    res.json({ ok: true, count: Array.isArray(emails) ? emails.length : 0 })
+    res.json({
+      ok: true,
+      count: Array.isArray(emails) ? emails.length : 0,
+    })
   } catch (e) {
-    res.json({ ok: false, error: e?.message || String(e) })
+    res.json({
+      ok: false,
+      error: e?.message || String(e),
+    })
   }
 })
 
@@ -217,9 +448,16 @@ app.post('/api/sql/databases', async (req, res) => {
       const result = await pool.request().query('SELECT name FROM sys.databases ORDER BY name')
       return result.recordset.map((r) => r.name)
     })
-    res.json({ ok: true, databases })
+
+    res.json({
+      ok: true,
+      databases,
+    })
   } catch (e) {
-    res.json({ ok: false, error: e.message })
+    res.json({
+      ok: false,
+      error: e.message,
+    })
   }
 })
 
@@ -229,9 +467,16 @@ app.post('/api/sql/tables', async (req, res) => {
       const result = await pool.request().query('SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES ORDER BY TABLE_NAME')
       return result.recordset
     })
-    res.json({ ok: true, info })
+
+    res.json({
+      ok: true,
+      info,
+    })
   } catch (e) {
-    res.json({ ok: false, error: e.message })
+    res.json({
+      ok: false,
+      error: e.message,
+    })
   }
 })
 
@@ -239,109 +484,234 @@ app.post('/api/sql/columns', async (req, res) => {
   try {
     const { sqlCfg, tableName } = req.body
     const mssql = require('mssql')
+
     const columns = await withTempSqlPool(sqlCfg, async (pool) => {
       const r = pool.request()
       r.input('tableName', mssql.NVarChar, tableName)
-      const result = await r.query(`SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = @tableName ORDER BY ORDINAL_POSITION`)
+
+      const result = await r.query(`
+        SELECT COLUMN_NAME
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_NAME = @tableName
+        ORDER BY ORDINAL_POSITION
+      `)
+
       return result.recordset.map((row) => row.COLUMN_NAME)
     })
-    res.json({ ok: true, columns })
+
+    res.json({
+      ok: true,
+      columns,
+    })
   } catch (e) {
-    res.json({ ok: false, error: e.message, columns: [] })
+    res.json({
+      ok: false,
+      error: e.message,
+      columns: [],
+    })
   }
 })
 
-// Email
+// Email manual desde UI
 app.post('/api/email/send', async (req, res) => {
   try {
     const cfg = loadConfig()
     await sendGraphEmail(cfg, req.body)
+
     res.json({ ok: true })
   } catch (e) {
-    res.json({ ok: false, error: e.message })
+    res.json({
+      ok: false,
+      error: e.message,
+    })
+  }
+})
+
+// S-1 test manual informe diario
+app.post('/api/email/daily-report/test', async (_req, res) => {
+  try {
+    const ok = await sendDailyReport()
+
+    res.json({
+      ok,
+      message: ok
+        ? 'Informe diario enviado correctamente.'
+        : 'No se pudo enviar el informe diario. Revisa logs.',
+    })
+  } catch (e) {
+    res.json({
+      ok: false,
+      error: e.message,
+    })
   }
 })
 
 // History
 app.get('/api/history/days', async (_req, res) => {
   const cfg = loadConfig()
-  if (!cfg?.sql) return res.json({ ok: false, error: 'Falta configuracion SQL.', days: [] })
+
+  if (!cfg?.sql) {
+    return res.json({
+      ok: false,
+      error: 'Falta configuracion SQL.',
+      days: [],
+    })
+  }
+
   try {
     const days = await sqlGetAvailableDays(cfg.sql)
-    res.json({ ok: true, days })
+
+    res.json({
+      ok: true,
+      days,
+    })
   } catch (e) {
-    res.json({ ok: false, error: e.message, days: [] })
+    res.json({
+      ok: false,
+      error: e.message,
+      days: [],
+    })
   }
 })
 
 app.get('/api/history/day/:dateStr', async (req, res) => {
   const cfg = loadConfig()
-  if (!cfg?.sql) return res.json({ ok: false, error: 'Falta configuracion SQL.' })
+
+  if (!cfg?.sql) {
+    return res.json({
+      ok: false,
+      error: 'Falta configuracion SQL.',
+    })
+  }
+
   try {
-    const [year, month, day] = String(req.params.dateStr || '').split('-').map(Number)
+    const [year, month, day] = String(req.params.dateStr || '')
+      .split('-')
+      .map(Number)
+
     const inicio = new Date(year, month - 1, day, 18, 0, 0, 0)
     const fin = new Date(inicio.getTime() + 86400000)
+
     const payload = await buildRefreshPayloadForWindow(cfg, inicio, fin, true)
-    res.json({ ok: true, rows: payload.rows, fullRows: payload.fullRows, windowStart: payload.windowStart, windowEnd: payload.windowEnd })
+
+    res.json({
+      ok: true,
+      rows: payload.rows,
+      fullRows: payload.fullRows,
+      windowStart: payload.windowStart,
+      windowEnd: payload.windowEnd,
+    })
   } catch (e) {
-    res.json({ ok: false, error: e.message })
+    res.json({
+      ok: false,
+      error: e.message,
+    })
   }
 })
 
 // Schedule
 app.get('/api/schedule/30days', async (_req, res) => {
   const cfg = loadConfig()
-  if (!cfg?.sql) return res.json({ ok: false, error: 'Falta configuracion SQL.', rows: [] })
+
+  if (!cfg?.sql) {
+    return res.json({
+      ok: false,
+      error: 'Falta configuracion SQL.',
+      rows: [],
+    })
+  }
+
   try {
     const rawJobs = await sqlGetScheduleJobs(cfg.sql)
-    const jobs = (Array.isArray(rawJobs) ? rawJobs : []).filter((j) => j && typeof j === 'object' && j.name)
+    const jobs = (Array.isArray(rawJobs) ? rawJobs : [])
+      .filter((j) => j && typeof j === 'object' && j.name)
+
     const now = new Date()
     const primaryJobs = jobs.filter((j) => !isBackupCopyJob(j))
     const copyJobs = jobs.filter((j) => isBackupCopyJob(j))
     const primaryIndex = buildPrimaryJobIndex(primaryJobs)
     const primaryEntriesByName = new Map()
     const all = []
+
     for (const j of primaryJobs) {
       const xml = j.schedule_xml || ''
       const parsed = parseScheduleXml(xml, j.name)
+
       if (!parsed) continue
+
       const entries = expandSchedule30(j.name, xml, now)
       primaryEntriesByName.set(j.name, entries)
       all.push(...entries)
     }
+
     for (const copy of copyJobs) {
       const parent = findParentJobForCopy(copy, primaryJobs, primaryIndex)
+
       if (!parent) continue
-      const inherited = cloneEntriesWithJobName(primaryEntriesByName.get(parent.name) || [], copy.name)
+
+      const inherited = cloneEntriesWithJobName(
+        primaryEntriesByName.get(parent.name) || [],
+        copy.name
+      )
+
       if (!inherited.length) continue
+
       all.push(...inherited)
     }
+
     all.sort((a, b) => a.date.getTime() - b.date.getTime())
-    res.json({ ok: true, rows: all.map((r) => ({ job: r.job, date: r.date.toISOString() })) })
+
+    res.json({
+      ok: true,
+      rows: all.map((r) => ({
+        job: r.job,
+        date: r.date.toISOString(),
+      })),
+    })
   } catch (e) {
-    res.json({ ok: false, error: e.message, rows: [] })
+    res.json({
+      ok: false,
+      error: e.message,
+      rows: [],
+    })
   }
 })
 
 // Jobs
 app.get('/api/jobs/list', async (_req, res) => {
   const cfg = loadConfig()
-  if (!cfg?.sql) return res.json({ ok: false, error: 'Falta configuracion SQL.', jobs: [] })
+
+  if (!cfg?.sql) {
+    return res.json({
+      ok: false,
+      error: 'Falta configuracion SQL.',
+      jobs: [],
+    })
+  }
+
   try {
     const jobs = await sqlListJobs(cfg.sql)
-    res.json({ ok: true, jobs })
+
+    res.json({
+      ok: true,
+      jobs,
+    })
   } catch (e) {
-    res.json({ ok: false, error: e.message, jobs: [] })
+    res.json({
+      ok: false,
+      error: e.message,
+      jobs: [],
+    })
   }
 })
 
 app.get('/api/jobs/executions/:jobName', async (req, res) => {
   const cfg = loadConfig()
+
   try {
     const jobName = decodeURIComponent(req.params.jobName).trim()
     const limit = Number(req.query.limit) || 200
 
-    // 1) Intentar resolver como job de email (VDC / Barracuda / AS400)
     const allRules = [
       ...(Array.isArray(cfg?.veeamDataCloudRules) ? cfg.veeamDataCloudRules : []),
       ...(Array.isArray(cfg?.barracudaRules) ? cfg.barracudaRules : []),
@@ -352,33 +722,63 @@ app.get('/api/jobs/executions/:jobName', async (req, res) => {
       const title = String(r?.title || '').trim().toLowerCase()
       const name = String(r?.name || '').trim().toLowerCase()
       const target = String(jobName || '').trim().toLowerCase()
+
       return target === title || target === name
     })
 
     if (matchedRule) {
-      const data = await getJobExecutionsFromEmailHistory(cfg, matchedRule, jobName, limit, 60)
+      const data = await getJobExecutionsFromEmailHistory(
+        cfg,
+        matchedRule,
+        jobName,
+        limit,
+        60
+      )
+
       return res.json(data)
     }
 
-    // 2) Si no, resolver como job SQL clásico
-    if (!cfg?.sql) return res.json({ ok: false, error: 'Falta configuracion SQL.', executions: [] })
+    if (!cfg?.sql) {
+      return res.json({
+        ok: false,
+        error: 'Falta configuracion SQL.',
+        executions: [],
+      })
+    }
 
     const data = await sqlGetJobExecutions(cfg.sql, jobName, limit)
     res.json(data)
   } catch (e) {
-    res.json({ ok: false, error: e.message, executions: [] })
+    res.json({
+      ok: false,
+      error: e.message,
+      executions: [],
+    })
   }
 })
 
 app.get('/api/jobs/executions', async (_req, res) => {
   const cfg = loadConfig()
-  if (!cfg?.sql) return res.json({ ok: false, error: 'Falta configuracion SQL.', executions: [] })
+
+  if (!cfg?.sql) {
+    return res.json({
+      ok: false,
+      error: 'Falta configuracion SQL.',
+      executions: [],
+    })
+  }
+
   try {
     const limit = Number(_req.query.limit) || 200
     const data = await sqlGetJobExecutions(cfg.sql, null, limit)
+
     res.json(data)
   } catch (e) {
-    res.json({ ok: false, error: e.message, executions: [] })
+    res.json({
+      ok: false,
+      error: e.message,
+      executions: [],
+    })
   }
 })
 
@@ -390,77 +790,119 @@ app.get('/api/health', (_req, res) => {
     lastRefresh: lastRefreshTime,
     totalJobs: lastPayload?.fullRows?.length ?? 0,
     mode: isElectron ? 'electron' : 'express',
+    dailyReportLastSent: getLastDailyReportDate(),
   })
 })
 
-// SPA fallback — todas las rutas no-API devuelven index.html
-app.get('{*path}', (_req, res) => {
+// SPA fallback
+app.use((req, res) => {
+  if (req.path.startsWith('/api/')) {
+    return res.status(404).json({
+      ok: false,
+      error: 'Endpoint API no encontrado',
+    })
+  }
+
   const indexPath = path.join(distPath, 'index.html')
-  if (fs.existsSync(indexPath)) return res.sendFile(indexPath)
+
+  if (fs.existsSync(indexPath)) {
+    return res.sendFile(indexPath)
+  }
+
   res.status(404).send('Build no encontrado. Ejecuta: npm run build')
 })
 
 // ─── Arranque ───────────────────────────────────────────────────────────────
-// HTTPS + HTTP redirect
-const https = require('https')
-const http = require('http')
 
-const HTTPS_PORT = Number(process.env.BM_HTTPS_PORT) || 443
-const HTTP_REDIRECT_PORT = Number(process.env.BM_HTTP_PORT) || 80
-const pfxPath = process.env.BM_PFX_PATH || path.join(__dirname, 'Certificado', 'DASHBOARD.pfx')
-const pfxPassword = process.env.BM_PFX_PASSWORD || ''
+function startBackupMonitorRuntime() {
+  const cfg = loadConfig()
 
-if (fs.existsSync(pfxPath)) {
-  const httpsServer = https.createServer({
-    pfx: fs.readFileSync(pfxPath),
-    passphrase: pfxPassword,
-  }, app)
+  startRefreshTimer(cfg?.refreshMinutes)
+  startDailyReportScheduler()
+  runRefresh()
+}
 
-  httpsServer.listen(HTTPS_PORT, '0.0.0.0', () => {
+function startHttpFallback(reason) {
+  console.warn('[HTTPS] Arrancando en HTTP fallback:', reason)
+
+  app.listen(PORT, '0.0.0.0', () => {
     console.log('='.repeat(60))
-    console.log('  BackupMonitor Server v1.0')
-    console.log('  HTTPS: https://dashboard:' + HTTPS_PORT)
-    console.log('  HTTP:  http://dashboard:' + HTTP_REDIRECT_PORT + ' (redirige a HTTPS)')
-    console.log('  Modo: Express + HTTPS')
+    console.log('  BackupMonitor Server v2.0.0')
+    console.log('  HTTP: http://localhost:' + PORT)
+    console.log('  Motivo fallback: ' + reason)
     console.log('  Auth: ' + (AUTH_TOKEN ? 'Token configurado' : 'SIN AUTENTICACION'))
     console.log('='.repeat(60))
 
-    const cfg = loadConfig()
-    startRefreshTimer(cfg?.refreshMinutes)
-    runRefresh()
+    startBackupMonitorRuntime()
   })
+}
 
-  const httpRedirect = http.createServer((req, res) => {
-    const host = (req.headers.host || '').split(':')[0]
-    const target = HTTPS_PORT === 443 ? 'https://' + host + req.url : 'https://' + host + ':' + HTTPS_PORT + req.url
-    res.writeHead(301, { Location: target })
-    res.end()
-  })
-  httpRedirect.listen(HTTP_REDIRECT_PORT, '0.0.0.0', () => {
-    console.log('  Redirect HTTP->HTTPS activo en puerto ' + HTTP_REDIRECT_PORT)
-  })
+if (fs.existsSync(pfxPath)) {
+  try {
+    if (!pfxPassword) {
+      throw new Error('BM_PFX_PASSWORD no definido o vacío')
+    }
+
+    console.log('[HTTPS] PFX path:', pfxPath)
+    console.log('[HTTPS] PFX password definida:', pfxPassword ? 'SI' : 'NO')
+    console.log('[HTTPS] PFX password length:', String(pfxPassword).length)
+
+    const httpsOptions = {
+      pfx: fs.readFileSync(pfxPath),
+      passphrase: pfxPassword,
+    }
+
+    const httpsServer = https.createServer(httpsOptions, app)
+
+    httpsServer.listen(HTTPS_PORT, '0.0.0.0', () => {
+      console.log('='.repeat(60))
+      console.log('  BackupMonitor Server v2.0.0')
+      console.log('  HTTPS: https://dashboard' + (HTTPS_PORT === 443 ? '' : ':' + HTTPS_PORT))
+      console.log('  HTTP:  http://dashboard:' + HTTP_REDIRECT_PORT + ' (redirige a HTTPS)')
+      console.log('  Modo: Express + HTTPS')
+      console.log('  Auth: ' + (AUTH_TOKEN ? 'Token configurado' : 'SIN AUTENTICACION'))
+      console.log('='.repeat(60))
+
+      startBackupMonitorRuntime()
+    })
+
+    const httpRedirect = http.createServer((req, res) => {
+      const host = (req.headers.host || '').split(':')[0]
+      const target = HTTPS_PORT === 443
+        ? 'https://' + host + req.url
+        : 'https://' + host + ':' + HTTPS_PORT + req.url
+
+      res.writeHead(301, {
+        Location: target,
+      })
+
+      res.end()
+    })
+
+    httpRedirect.listen(HTTP_REDIRECT_PORT, '0.0.0.0', () => {
+      console.log('  Redirect HTTP->HTTPS activo en puerto ' + HTTP_REDIRECT_PORT)
+    })
+  } catch (err) {
+    console.error('[HTTPS] Error cargando certificado PFX:', err?.message || err)
+    process.exit(1)
+  }
 } else {
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log('='.repeat(60))
-    console.log('  BackupMonitor Server v1.0')
-    console.log('  HTTP: http://localhost:' + PORT + ' (PFX no encontrado)')
-    console.log('='.repeat(60))
-    const cfg = loadConfig()
-    startRefreshTimer(cfg?.refreshMinutes)
-    runRefresh()
-  })
+  startHttpFallback('PFX no encontrado: ' + pfxPath)
 }
 
 // Cleanup
 process.on('SIGINT', async () => {
   console.log('\n[SHUTDOWN] Cerrando...')
+
   if (refreshIntervalId) clearInterval(refreshIntervalId)
+
   await closeCachedSqlPool()
   process.exit(0)
 })
 
 process.on('SIGTERM', async () => {
   if (refreshIntervalId) clearInterval(refreshIntervalId)
+
   await closeCachedSqlPool()
   process.exit(0)
 })
