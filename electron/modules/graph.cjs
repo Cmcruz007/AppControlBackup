@@ -337,34 +337,43 @@ async function getJobExecutionsFromEmailHistory(cfg, rule, jobName, limit = 200,
   const allEmails = await getEmailsInRange(cfg, inicio, fin)
 
   const senderRule = normalizeText(rule?.sender)
-  const subjectRule = normalizeText(rule?.subjectContains || rule?.title || rule?.name || jobName)
+const subjectRule = normalizeText(rule?.subjectContains || rule?.title || rule?.name || jobName)
 
-  const filtered = (Array.isArray(allEmails) ? allEmails : [])
-    .filter((m) => {
-      const fromAddr = normalizeText(m?.from?.emailAddress?.address)
-      const senderAddr = normalizeText(m?.sender?.emailAddress?.address)
-      const sender = senderAddr || fromAddr
-      const subject = normalizeText(m?.subject)
+// Escape para regex
+const escapeRegex = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
-      const senderOk =
-        !senderRule ||
-        !sender ||
-        sender.includes(senderRule) ||
-        senderRule.includes(sender) ||
-        fromAddr.includes(senderRule) ||
-        senderRule.includes(fromAddr)
+// Para subjectRule construimos una regex que matchea como "palabra exacta"
+// para evitar que "Backup SD" matche "Backup SDB/TGT"
+const subjectRegex = subjectRule
+  ? new RegExp(`(^|[^a-z0-9])${escapeRegex(subjectRule)}([^a-z0-9]|$)`, 'i')
+  : null
 
-      const isBarracuda =
-        sender.includes('barracuda') ||
-        fromAddr.includes('barracuda')
+const filtered = (Array.isArray(allEmails) ? allEmails : [])
+  .filter((m) => {
+    const fromAddr = normalizeText(m?.from?.emailAddress?.address)
+    const senderAddr = normalizeText(m?.sender?.emailAddress?.address)
+    const sender = senderAddr || fromAddr
+    const subject = normalizeText(m?.subject)
 
-      const subjectOk =
-        !subjectRule ||
-        subject.includes(subjectRule) ||
-        (isBarracuda && subject.includes('backup report'))
+    const senderOk =
+      !senderRule ||
+      !sender ||
+      sender.includes(senderRule) ||
+      senderRule.includes(sender) ||
+      fromAddr.includes(senderRule) ||
+      senderRule.includes(fromAddr)
 
-      return senderOk && subjectOk
-    })
+    const isBarracuda =
+      sender.includes('barracuda') ||
+      fromAddr.includes('barracuda')
+
+    const subjectOk =
+      !subjectRegex ||
+      subjectRegex.test(subject) ||
+      (isBarracuda && /backup\s+report/i.test(subject))
+
+    return senderOk && subjectOk
+  })
     .sort((a, b) => new Date(b.receivedDateTime).getTime() - new Date(a.receivedDateTime).getTime())
     .slice(0, Number(limit) || 200)
 
