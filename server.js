@@ -848,7 +848,7 @@ function startHttpFallback(reason) {
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log('='.repeat(60))
-    console.log('  BackupMonitor Server v2.2')
+    console.log('  BackupMonitor Server v2.3')
     console.log('  HTTP: http://localhost:' + PORT)
     console.log('  Motivo fallback: ' + reason)
     console.log('  Auth: ' + (AUTH_TOKEN ? 'Token configurado' : 'SIN AUTENTICACION'))
@@ -877,7 +877,7 @@ if (fs.existsSync(pfxPath)) {
 
     httpsServer.listen(HTTPS_PORT, '0.0.0.0', () => {
       console.log('='.repeat(60))
-      console.log('  BackupMonitor Server v2.2')
+      console.log('  BackupMonitor Server v2.3')
       console.log('  HTTPS: https://dashboard' + (HTTPS_PORT === 443 ? '' : ':' + HTTPS_PORT))
       console.log('  HTTP:  http://dashboard:' + HTTP_REDIRECT_PORT + ' (redirige a HTTPS)')
       console.log('  Modo: Express + HTTPS')

@@ -1,5 +1,25 @@
 # Changelog
 
+## [2.3] - 2026-06-24
+
+### ✨ Mejorado
+- 🎨 **S-3: Cabecera del correo simplificada**
+  - Eliminado círculo del % de éxito de la cabecera
+  - KPIs (TOTAL/ÉXITOS/AVISOS/ERRORES/EN CURSO) intactos
+- 📏 **Tabla de detalle del correo con anchos fijos**
+  - Tabla principal: 820px → 1000px
+  - Estado: 90px
+  - Job: 280px (antes flexible y se rompía en varias líneas)
+  - Fuente: 110px
+  - Inicio: 140px
+  - Dur.: 80px (texto "4m 27s" en 1 línea)
+  - Detalle: 300px (texto "Correo Recibido, revisar manualmente el log" en 1 línea)
+- 🛡 `table-layout:fixed` para garantizar que Outlook respete los anchos
+
+### 🔧 Interno
+- ✅ Builder HTML actualizado en ambos archivos (`.cjs` backend + `.ts` frontend)
+- ✅ Coherencia visual entre botón Enviar y envío automático S-1
+
 ## [2.2] - 2026-06-24
 
 ### ✨ Añadido
