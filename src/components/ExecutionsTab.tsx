@@ -98,8 +98,8 @@ export default function ExecutionsTab({
                     {(data?.executions ?? []).map((x: any) => (
                       <tr key={x.id} className={`compact-row row-${safeLower(x.status)}`}>
                         <td className="tabular">{formatExecutionDate(x.start)}</td>
-                        <td className="tabular">{x.startDisplay ?? "—"}</td>
-                        <td className="tabular">{x.duration ?? "—"}</td>
+                        <td className="tabular">{formatExecutionTime(x.start)}</td>
+			<td className="tabular">{formatExecutionDuration(x.duration)}</td>
                         <td><span className={`badge ${safeLower(x.status)}`}>{String(x.status ?? "").toUpperCase()}</span></td>
                       </tr>
                     ))}
@@ -115,4 +115,27 @@ export default function ExecutionsTab({
       )}
     </div>
   )
+}
+
+function formatExecutionTime(value: string | null) {
+  if (!value) return "—"
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return "—"
+  return d.toLocaleTimeString("es-ES", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  })
+}
+
+function formatExecutionDuration(ms: number | null | undefined) {
+  if (ms == null || typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) return "—"
+  const totalSec = Math.floor(ms / 1000)
+  const h = Math.floor(totalSec / 3600)
+  const m = Math.floor((totalSec % 3600) / 60)
+  const s = totalSec % 60
+  const pad = (n: number) => String(n).padStart(2, "0")
+  if (h > 0) return `${h}h ${pad(m)}m ${pad(s)}s`
+  if (m > 0) return `${m}m ${pad(s)}s`
+  return `${s}s`
 }
