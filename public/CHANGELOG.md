@@ -1,5 +1,27 @@
 # Changelog
 
+## [2.2] - 2026-06-24
+
+### ✨ Añadido
+- 📜 **B-1: Histórico de jobs por email (AS400, Barracuda, VDC)**
+  - Parser AS400 desde adjunto `.txt` → extrae arranque, finalización y código
+  - Parser Barracuda desde body del correo → extrae Start/End/Duration/Size/Items/Result
+  - VDC con status inferido del subject (Start/End no disponibles sin login)
+  - Procesamiento por lotes (8 en paralelo) para no saturar Graph
+- 📊 **Modal Historial muestra "Inicio" (HH:MM:SS) y "Duración" (Xh Ym Zs)**
+- 🛡 **Filtrado exacto del subject**: regex con bordes de palabra para evitar que jobs con nombre similar se mezclen (ej. "Backup SD" ya no captura "Backup SDB/TGT")
+
+### 🐛 Corregido
+- 🐞 Duración AS400: ahora se calcula como `end - start` (tiempo de reloj real)
+  - Se ignora el campo "se utilizaron N segundos" del log (es CPU time)
+- 🐞 Eliminada confusión entre jobs por prefijo de nombre en histórico
+- 🐞 `Backup SD` ya no incluye ejecuciones de `Backup SDB/TGT` (eran 40 mezcladas, ahora 20 + 20 separadas)
+
+### 🔧 Interno
+- ✅ Nueva función `getMessageBody(cfg, messageId)` para descargar body completo
+- ✅ Nueva función `detectRuleSource(rule)` para tipar la regla (AS400/Barracuda/VDC)
+- ✅ Parsers exportados desde `graph.cjs` para testing futuro
+- ✅ Cada execution incluye `parserSource` y `parsed` (true/false) para diagnóstico
 ---
 ## [2.1] - 2026-06-23
 
