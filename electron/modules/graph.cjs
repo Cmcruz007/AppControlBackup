@@ -169,11 +169,19 @@ function detectRuleSource(rule) {
  *   "Trabajo X arrancado el YY/MM/DD a las HH:MM:SS"
  *   "Trabajo X finalizado el YY/MM/DD a las HH:MM:SS; se utilizaron N,NNN segundos; código de finalización N"
  */
+/**
+ * AS400 — parsea adjunto .txt:
+ *   "Trabajo X arrancado el YY/MM/DD a las HH:MM:SS"
+ *   "Trabajo X finalizado el YY/MM/DD a las HH:MM:SS; ... código de finalización N"
+ *
+ * Duración: SIEMPRE end - start (tiempo de reloj real).
+ * Ignoramos el campo "se utilizaron N segundos" (es tiempo de CPU, no real).
+ */
 function parseAs400Attachment(text) {
   if (!text) return null
 
   const startMatch = text.match(/arrancado\s+el\s+(\d{2})\/(\d{2})\/(\d{2})\s+a\s+las\s+(\d{2}):(\d{2}):(\d{2})/i)
-  const endMatch = text.match(/finalizado\s+el\s+(\d{2})\/(\d{2})\/(\d{2})\s+a\s+las\s+(\d{2}):(\d{2}):(\d{2})\s*;\s*se\s+utilizaron\s+([\d.,]+)\s+segundos\s*;\s*c[oó]digo\s+de\s+finalizaci[oó]n\s+(\d+)/i)
+  const endMatch = text.match(/finalizado\s+el\s+(\d{2})\/(\d{2})\/(\d{2})\s+a\s+las\s+(\d{2}):(\d{2}):(\d{2})[\s\S]*?c[oó]digo\s+de\s+finalizaci[oó]n\s+(\d+)/i)
 
   const parseDate = (yy, mm, dd, hh, mi, ss) => {
     const y = parseInt(yy, 10)
@@ -188,17 +196,13 @@ function parseAs400Attachment(text) {
   }
   if (endMatch) {
     endTime = parseDate(endMatch[1], endMatch[2], endMatch[3], endMatch[4], endMatch[5], endMatch[6])
-
-    // "36,882 segundos" → 36.882 (coma como separador decimal en español)
-    const secsRaw = String(endMatch[7] || '').replace(/\./g, '').replace(',', '.')
-    const secs = parseFloat(secsRaw)
-    if (!isNaN(secs) && secs > 0) durationMs = Math.round(secs * 1000)
-
-    code = parseInt(endMatch[8], 10)
+    code = parseInt(endMatch[7], 10)
     status = code === 0 ? 'success' : 'failed'
   }
 
-  if (!durationMs && startTime && endTime) {
+  // Duración = tiempo entre arranque y finalización (reloj real).
+  // Nunca se usa el campo "se utilizaron N segundos" del AS400.
+  if (startTime && endTime) {
     durationMs = endTime.getTime() - startTime.getTime()
   }
 
