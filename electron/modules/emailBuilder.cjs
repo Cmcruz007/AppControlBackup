@@ -193,8 +193,8 @@ function buildEmailHtml(payloadOrRows, kpis, day, range) {
         </td>
         <td style="padding:10px 12px;border-top:1px solid #1e3a5f;font-size:12px;color:#94a3b8;font-family:Arial,sans-serif;min-width:120px;white-space:nowrap;">${escapeHtml(sourceLabel(r.source))}</td>
         <td style="padding:10px 12px;border-top:1px solid #1e3a5f;font-size:12px;color:#e2e8f0;font-family:'Courier New',monospace;min-width:140px;white-space:nowrap;">${escapeHtml(formatLocal(r.nextRun))}</td>
-        <td style="padding:10px 12px;border-top:1px solid #1e3a5f;font-size:12px;color:#e2e8f0;font-family:'Courier New',monospace;text-align:center;">${escapeHtml(formatDuration(durationMs))}</td>
-        <td style="padding:10px 12px;border-top:1px solid #1e3a5f;font-size:12px;color:#cbd5e1;font-family:Arial,sans-serif;">${escapeHtml(reason)}</td>
+        <td width="100" style="padding:10px 12px;border-top:1px solid #1e3a5f;font-size:12px;color:#e2e8f0;font-family:'Courier New',monospace;text-align:center;white-space:nowrap;min-width:100px">${escapeHtml(formatDuration(durationMs))}</td>
+        <td width="350" style="padding:10px 12px;border-top:1px solid #1e3a5f;font-size:12px;color:#cbd5e1;font-family:Arial,sans-serif;white-space:nowrap;min-width:350px">${escapeHtml(reason)}</td>
       </tr>`
   }).join('')
 
@@ -204,8 +204,7 @@ function buildEmailHtml(payloadOrRows, kpis, day, range) {
     ? 'HAY INCIDENCIAS EN EL BACKUP DEL DÍA'
     : 'TODOS LOS BACKUPS DEL DÍA SON CORRECTOS'
 
-  const pct = total > 0 ? Math.round((success / total) * 100) : 0
-  const pctColor = pct === 100 ? '4ADE80' : pct >= 80 ? 'FBBF24' : 'F87171'
+  
 
   return `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml">
@@ -222,15 +221,7 @@ function buildEmailHtml(payloadOrRows, kpis, day, range) {
             <p style="margin:4px 0 0 0;color:#fbbf24;font-size:15px;font-weight:700;font-family:Arial,sans-serif">${escapeHtml(day)}</p>
             <p style="margin:6px 0 0 0;color:#94a3b8;font-size:11px;font-family:Arial,sans-serif">${escapeHtml(range)}</p>
           </td>
-          <td align="right" valign="top">
-            <table cellpadding="0" cellspacing="0" border="0"><tr>
-              <td bgcolor="#0f172a" width="64" align="center" style="border:2px solid #${pctColor};border-radius:32px;padding:12px 8px">
-                <p style="margin:0;color:#${pctColor};font-size:18px;font-weight:800;font-family:Arial,sans-serif;line-height:1">${pct}%</p>
-                <p style="margin:2px 0 0 0;color:#94a3b8;font-size:9px;text-transform:uppercase;font-family:Arial,sans-serif">Éxito</p>
-              </td>
-            </tr></table>
-          </td>
-        </tr></table>
+                  </tr></table>
       </td></tr>
       <tr><td bgcolor="#${bannerBgColor}" style="padding:18px 36px;">
         <p style="margin:0;color:#ffffff;font-size:18px;font-weight:800;font-family:Arial,sans-serif;text-align:center;">${bannerText}</p>
@@ -246,8 +237,8 @@ function buildEmailHtml(payloadOrRows, kpis, day, range) {
             <th align="left" style="padding:11px 12px;color:#60a5fa;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;font-family:Arial,sans-serif">Job</th>
             <th align="left" style="padding:11px 12px;color:#60a5fa;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;font-family:Arial,sans-serif;white-space:nowrap">Fuente</th>
             <th align="left" style="padding:11px 12px;color:#60a5fa;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;font-family:Arial,sans-serif;white-space:nowrap">Inicio</th>
-            <th align="center" style="padding:11px 12px;color:#60a5fa;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;font-family:Arial,sans-serif">Dur.</th>
-            <th align="left" style="padding:11px 12px;color:#60a5fa;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;font-family:Arial,sans-serif">Detalle</th>
+            <th align="center" width="100" style="padding:11px 12px;color:#60a5fa;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;font-family:Arial,sans-serif;white-space:nowrap;min-width:100px">Dur.</th>
+            <th align="left" width="350" style="padding:11px 12px;color:#60a5fa;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;font-family:Arial,sans-serif;white-space:nowrap;min-width:350px">Detalle</th>
           </tr></thead>
           <tbody>${tableRows}</tbody>
         </table>
