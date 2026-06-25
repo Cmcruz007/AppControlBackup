@@ -173,25 +173,37 @@ async function buildRefreshPayloadForWindow(cfg, inicio, fin, includeSql = true)
   }
 
   function cleanRow(row) {
-    const refDate =
-      row.lastRun ||
-      row.start ||
-      row.end ||
-      row.nextRun
+  const evidenceDates = [
+    row.lastRun,
+    row.start,
+    row.end,
+    row.lastEmailDate,
+    row.emailReceivedDate,
+    row.receivedDateTime,
+    row.email?.receivedDateTime,
+  ]
 
-    if (!isSameWindow(refDate)) {
-      return {
-        ...row,
-        status: 'pending',
-        reason: 'Pendiente ejecución',
-        duration: null,
-        lastRun: null,
-      }
+  const hasEvidenceInWindow = evidenceDates.some(isSameWindow)
+
+  // IMPORTANTE:
+  // NO usar row.nextRun aquí.
+  // nextRun es planificación / ventana, no prueba de ejecución real.
+  if (!hasEvidenceInWindow) {
+    return {
+      ...row,
+      status: 'pending',
+      reason: 'Pendiente ejecución',
+      duration: '',
+      durationMs: null,
+      durationTrend: null,
+      lastRun: null,
+      lastResult: -1,
+      endTimeDisplay: '',
     }
-
-    return row
   }
 
+  return row
+}
   // ───────── CONSTRUCCIÓN FINAL ─────────
 
   const fullRows = [...sqlFullRows, ...vdcRows, ...barraRows, ...as400Rows]
