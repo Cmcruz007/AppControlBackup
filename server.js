@@ -157,7 +157,45 @@ async function buildRefreshPayloadForWindow(cfg, inicio, fin, includeSql = true)
     )
   ).map(r => applyManualOverride(r, overrides, ahora))
 
+  // ───────── LIMPIEZA POR VENTANA OPERACIONAL ─────────
+  // Objetivo:
+  // - Evitar estados arrastrados de ventanas anteriores.
+  // - Limpiar comentarios antiguos.
+  // - Marcar como pending lo que no pertenece a la ventana actual.
+
+  function isSameWindow(date) {
+    if (!date) return false
+
+    const d = new Date(date)
+    if (Number.isNaN(d.getTime())) return false
+
+    return d >= inicio && d < fin
+  }
+
+  function cleanRow(row) {
+    const refDate =
+      row.lastRun ||
+      row.start ||
+      row.end ||
+      row.nextRun
+
+    if (!isSameWindow(refDate)) {
+      return {
+        ...row,
+        status: 'pending',
+        reason: 'Pendiente ejecución',
+        duration: null,
+        lastRun: null,
+      }
+    }
+
+    return row
+  }
+
+  // ───────── CONSTRUCCIÓN FINAL ─────────
+
   const fullRows = [...sqlFullRows, ...vdcRows, ...barraRows, ...as400Rows]
+    .map(cleanRow)
     .sort((a, b) => new Date(b.nextRun).getTime() - new Date(a.nextRun).getTime())
 
   return {
@@ -250,7 +288,9 @@ async function sendDailyReport() {
 
     if (!lastPayload || !Array.isArray(lastPayload.fullRows)) {
       console.log('[S-1] No hay datos disponibles todavía. Ejecutando refresh previo...')
+
       const payload = await runRefresh()
+
       if (!payload?.ok || !Array.isArray(payload.fullRows)) {
         console.log('[S-1] No se pudo generar informe: no hay payload válido')
         return false
@@ -288,8 +328,10 @@ async function sendDailyReport() {
 
     const bodyHtml = buildEmailHtml(data)
     const subject = `Informe Backup ${new Date().toLocaleDateString('es-ES', {
-  day: '2-digit', month: 'long', year: 'numeric'
-}).toUpperCase()}`
+      day: '2-digit',
+      month: 'long',
+      year: 'numeric',
+    }).toUpperCase()}`
 
     console.log('[S-1] Llamando a sendGraphEmail...')
 
@@ -304,9 +346,15 @@ async function sendDailyReport() {
   } catch (err) {
     console.error('[S-1] Error enviando correo:', err?.message || err)
     console.error('[S-1] Stack:', err?.stack)
+
     try {
-      logGraphError('DAILY_REPORT_ERROR', { message: err?.message || String(err) })
-    } catch {}
+      logGraphError('DAILY_REPORT_ERROR', {
+        message: err?.message || String(err),
+      })
+    } catch {
+      // evitar romper por fallo en logging
+    }
+
     return false
   }
 }
