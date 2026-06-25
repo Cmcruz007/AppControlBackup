@@ -56,8 +56,6 @@ if (proxyUrl) {
   console.log('[PROXY] Configurado:', proxyUrl)
 }
 
-// server.js — Express server for BackupMonitor production 24/7
-
 // ─── Configuración ──────────────────────────────────────────────────────────
 
 const PORT = Number(process.env.BM_PORT) || 3100
@@ -112,8 +110,55 @@ function setLastDailyReportDate(dateKey) {
 
 async function buildRefreshPayloadForWindow(cfg, inicio, fin, includeSql = true) {
   const ahora = new Date()
-  const overrides = cfg?.manualOverrides || {}
+  const rawOverrides = cfg?.manualOverrides || {}
   const criticalityByJob = cfg?.criticalityByJob || {}
+
+  // ─── Helpers de ventana ───────────────────────────────────────────────────
+
+  function isSameWindow(date) {
+    if (!date) return false
+
+    const d = new Date(date)
+    if (Number.isNaN(d.getTime())) return false
+
+    return d >= inicio && d < fin
+  }
+
+  function getOverrideDate(override) {
+    if (!override || typeof override !== 'object') return null
+
+    return (
+      override.updatedAt ||
+      override.updated ||
+      override.modifiedAt ||
+      override.createdAt ||
+      override.timestamp ||
+      override.ts ||
+      override.date ||
+      override.manualAt ||
+      null
+    )
+  }
+
+  function filterManualOverridesForWindow(overrides) {
+    const filtered = {}
+
+    for (const [jobName, override] of Object.entries(overrides || {})) {
+      const overrideDate = getOverrideDate(override)
+
+      // Si no tiene fecha en la ventana actual, no se reaplica.
+      // Esto evita arrastrar comentarios manuales antiguos.
+      if (!isSameWindow(overrideDate)) continue
+
+      filtered[jobName] = override
+    }
+
+    return filtered
+  }
+
+  const overrides = filterManualOverridesForWindow(rawOverrides)
+
+  // ─── Datos ────────────────────────────────────────────────────────────────
 
   const [emails, sessions] = await Promise.all([
     cfg?.graph?.tenantId ? getEmailsInRange(cfg, inicio, fin) : Promise.resolve([]),
@@ -157,54 +202,39 @@ async function buildRefreshPayloadForWindow(cfg, inicio, fin, includeSql = true)
     )
   ).map(r => applyManualOverride(r, overrides, ahora))
 
-  // ───────── LIMPIEZA POR VENTANA OPERACIONAL ─────────
-  // Objetivo:
-  // - Evitar estados arrastrados de ventanas anteriores.
-  // - Limpiar comentarios antiguos.
-  // - Marcar como pending lo que no pertenece a la ventana actual.
-
-  function isSameWindow(date) {
-    if (!date) return false
-
-    const d = new Date(date)
-    if (Number.isNaN(d.getTime())) return false
-
-    return d >= inicio && d < fin
-  }
+  // ─── Limpieza por ventana operacional ─────────────────────────────────────
 
   function cleanRow(row) {
-  const evidenceDates = [
-    row.lastRun,
-    row.start,
-    row.end,
-    row.lastEmailDate,
-    row.emailReceivedDate,
-    row.receivedDateTime,
-    row.email?.receivedDateTime,
-  ]
+    const evidenceDates = [
+      row.lastRun,
+      row.start,
+      row.end,
+      row.lastEmailDate,
+      row.emailReceivedDate,
+      row.receivedDateTime,
+      row.email?.receivedDateTime,
+    ]
 
-  const hasEvidenceInWindow = evidenceDates.some(isSameWindow)
+    const hasEvidenceInWindow = evidenceDates.some(isSameWindow)
 
-  // IMPORTANTE:
-  // NO usar row.nextRun aquí.
-  // nextRun es planificación / ventana, no prueba de ejecución real.
-  if (!hasEvidenceInWindow) {
-    return {
-      ...row,
-      status: 'pending',
-      reason: 'Pendiente ejecución',
-      duration: '',
-      durationMs: null,
-      durationTrend: null,
-      lastRun: null,
-      lastResult: -1,
-      endTimeDisplay: '',
+    // NO usar row.nextRun aquí.
+    // nextRun es planificación, no evidencia real de ejecución.
+    if (!hasEvidenceInWindow) {
+      return {
+        ...row,
+        status: 'pending',
+        reason: 'Pendiente ejecución',
+        duration: '',
+        durationMs: null,
+        durationTrend: null,
+        lastRun: null,
+        lastResult: -1,
+        endTimeDisplay: '',
+      }
     }
-  }
 
-  return row
-}
-  // ───────── CONSTRUCCIÓN FINAL ─────────
+    return row
+  }
 
   const fullRows = [...sqlFullRows, ...vdcRows, ...barraRows, ...as400Rows]
     .map(cleanRow)
@@ -435,7 +465,6 @@ app.use(authMiddleware)
 
 // ─── API Endpoints ──────────────────────────────────────────────────────────
 
-// Estado actual
 app.get('/api/status', (_req, res) => {
   if (!lastPayload) {
     return res.json({
@@ -450,7 +479,6 @@ app.get('/api/status', (_req, res) => {
   })
 })
 
-// Forzar refresh manual
 app.post('/api/refresh', async (_req, res) => {
   try {
     const payload = await runRefresh()
@@ -463,7 +491,6 @@ app.post('/api/refresh', async (_req, res) => {
   }
 })
 
-// Config
 app.get('/api/config', (_req, res) => {
   try {
     const cfg = loadConfig() || {}
@@ -494,7 +521,6 @@ app.post('/api/config', (req, res) => {
   }
 })
 
-// SQL tests
 app.post('/api/test/sql', async (req, res) => {
   try {
     await withTempSqlPool(req.body, async () => true)
@@ -522,7 +548,6 @@ app.post('/api/test/graph', async (req, res) => {
   }
 })
 
-// SQL Explorer
 app.post('/api/sql/databases', async (req, res) => {
   try {
     const databases = await withTempSqlPool(req.body, async (pool) => {
@@ -593,7 +618,6 @@ app.post('/api/sql/columns', async (req, res) => {
   }
 })
 
-// Email manual desde UI
 app.post('/api/email/send', async (req, res) => {
   try {
     const cfg = loadConfig()
@@ -608,7 +632,6 @@ app.post('/api/email/send', async (req, res) => {
   }
 })
 
-// S-1 test manual informe diario
 app.post('/api/email/daily-report/test', async (_req, res) => {
   try {
     const ok = await sendDailyReport()
@@ -627,7 +650,6 @@ app.post('/api/email/daily-report/test', async (_req, res) => {
   }
 })
 
-// History
 app.get('/api/history/days', async (_req, res) => {
   const cfg = loadConfig()
 
@@ -690,7 +712,6 @@ app.get('/api/history/day/:dateStr', async (req, res) => {
   }
 })
 
-// Schedule
 app.get('/api/schedule/30days', async (_req, res) => {
   const cfg = loadConfig()
 
@@ -758,7 +779,6 @@ app.get('/api/schedule/30days', async (_req, res) => {
   }
 })
 
-// Jobs
 app.get('/api/jobs/list', async (_req, res) => {
   const cfg = loadConfig()
 
@@ -863,7 +883,6 @@ app.get('/api/jobs/executions', async (_req, res) => {
   }
 })
 
-// Health check
 app.get('/api/health', (_req, res) => {
   res.json({
     ok: true,
