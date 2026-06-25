@@ -13,7 +13,7 @@ export default function Kpi({ label, value, accentColor, active = false, onClick
       : undefined,
 
     background: accentColor
-      ? `${accentColor}15`
+      ? `${accentColor}10`
       : undefined,
 
     transform: active ? "translateY(-1px)" : undefined,
@@ -31,11 +31,12 @@ export default function Kpi({ label, value, accentColor, active = false, onClick
   className="value"
   style={{
     color: accentColor,
-    textShadow: `0 0 6px ${accentColor}55`,
+    textShadow: accentColor ? `0 0 6px ${accentColor}55` : undefined,
   }}
 >
   {value}
 </div>
+
 
 
       <div
