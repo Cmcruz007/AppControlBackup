@@ -1,5 +1,36 @@
 # Changelog
 
+## [3.0] - 2026-06-25
+
+### 🚀 Versión mayor
+- Consolidación de BackupMonitor como herramienta estable de monitorización.
+- Cierre del bloque principal de monitorización multi-fuente: Veeam SQL, Veeam Data Cloud, Barracuda y AS400.
+
+### ✨ Añadido / Mejorado
+- Limpieza de estado y comentarios por ventana operacional.
+  - Los jobs sin evidencia real de ejecución/recepción dentro de la ventana pasan a `pending`.
+  - Se evita arrastrar estados y comentarios de ventanas anteriores.
+  - `nextRun` ya no se usa como evidencia de ejecución real.
+- Mejora visual de KPI del dashboard.
+  - Fondos suavemente tintados por color de estado.
+  - Números y bordes más visibles.
+  - Mejor lectura visual de éxitos, avisos, errores y jobs en curso.
+- Email diario consolidado.
+  - Diseño profesional unificado.
+  - Tabla de detalle con anchos fijos.
+  - Asunto normalizado: `Informe Backup DD DE MES DE AAAA`.
+
+### 🐛 Corregido
+- Restaurado HTTPS en puerto 443 tras reponer el certificado `DASHBOARD.pfx`.
+- Corregido fallback involuntario a HTTP 3100 cuando faltaba el PFX.
+- Corregida limpieza de comentarios antiguos en jobs por email.
+- Corregido uso incorrecto de `nextRun` para determinar si un job pertenecía a la ventana actual.
+
+### 🔧 Interno
+- `server.js` mantiene la limpieza en `buildRefreshPayloadForWindow`.
+- La evidencia real de ejecución se basa en `lastRun`, `start`, `end`, `lastEmailDate`, `emailReceivedDate` o `receivedDateTime`.
+- Validado en DASHBOARD con `POST /api/refresh`.
+
 ## [2.3] - 2026-06-24
 
 ### ✨ Mejorado
