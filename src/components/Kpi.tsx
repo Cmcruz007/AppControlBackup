@@ -9,11 +9,11 @@ export default function Kpi({ label, value, accentColor, active = false, onClick
     borderColor: accentColor,
 
     boxShadow: accentColor
-      ? `0 0 0 1px ${accentColor} inset, 0 0 12px ${accentColor}33`
+      ? `0 0 0 1px ${accentColor} inset, 0 0 20px ${accentColor}55`
       : undefined,
 
     background: accentColor
-      ? `${accentColor}10`
+      ? `${accentColor}18`
       : undefined,
 
     transform: active ? "translateY(-1px)" : undefined,
@@ -31,7 +31,7 @@ export default function Kpi({ label, value, accentColor, active = false, onClick
   className="value"
   style={{
     color: accentColor,
-    textShadow: accentColor ? `0 0 6px ${accentColor}55` : undefined,
+    textShadow: accentColor ? `0 0 10px ${accentColor}AA` : undefined,
   }}
 >
   {value}
