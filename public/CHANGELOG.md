@@ -1,5 +1,23 @@
 # Changelog
 
+## [3.1] - 2026-06-26
+
+### ✨ Mejorado
+- B-1.1: Persistencia y migración automática de comentarios manuales con timestamp.
+  - `validateConfigInput` añade automáticamente `timestamp` a cualquier override sin fecha al guardar.
+  - `loadConfig` migra en memoria los overrides antiguos para que dejen de ignorarse por la limpieza por ventana.
+  - Compatibilidad con campos legacy: `updatedAt`, `updated`, `modifiedAt`, `createdAt`, `ts`, `date`, `manualAt`.
+  - Compatibilidad con overrides legacy guardados como string plano: se convierten a objeto `{ comment, timestamp }`.
+
+### 🐛 Corregido
+- Comentarios manuales antiguos se ignoraban para siempre tras la limpieza por ventana de v3.0.
+- Tras este fix, los comentarios manuales se respetan dentro de su ventana operacional y se descartan correctamente al cambiar de ventana.
+
+### 🔧 Interno
+- No se modifica `server.js` (la limpieza por ventana ya respetaba `timestamp` desde v3.0).
+- No se modifica el frontend (ya guardaba `timestamp` al editar comentario).
+- Cambios localizados en `electron/modules/config.cjs`.
+
 ## [3.0] - 2026-06-25
 
 ### 🚀 Versión mayor
