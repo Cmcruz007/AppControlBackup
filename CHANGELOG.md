@@ -1,5 +1,30 @@
 # Changelog
 
+## [3.2] - 2026-06-26
+
+### ✨ Añadido
+- 🔐 **S-2: Autenticación de API mediante BM_AUTH_TOKEN**
+  - Todas las rutas `/api/*` quedan protegidas cuando `BM_AUTH_TOKEN` está definido.
+  - El backend devuelve `401 / No autorizado` si no se envía token.
+  - El frontend envía el token mediante header `Authorization: Bearer <token>`.
+  - Nuevo componente `TokenGate` para introducir el token desde el navegador.
+  - El token se guarda localmente en `localStorage` con clave `bm.authToken`.
+  - La UI detecta respuestas `401` y vuelve a mostrar el panel de acceso.
+
+### 🐛 Corregido
+- **Backup Copy de Veeam ya no aparece duplicado** cuando existen fila parent y fila child.
+  - El dashboard conserva el nombre largo real de la sesión de Veeam.
+  - Ejemplo: `BackupCopy\JobOrigen`.
+  - Se evita mostrar simultáneamente el parent y el child como dos jobs distintos.
+- **S-4 validado:** el botón Planificador descarga correctamente el Excel de próximos 30 días en modo web.
+
+### 🔧 Interno
+- `src/utils/api.ts` centraliza el envío del token Bearer y detecta `401`.
+- Nuevo `src/components/TokenGate.tsx`.
+- `src/App.tsx` integra `TokenGate` y escucha el evento `bm:unauthorized`.
+- `electron/modules/engine.cjs` ajustado para colapsar duplicados de Backup Copy mostrando el nombre largo.
+
+
 ## [3.1] - 2026-06-26
 
 ### ✨ Mejorado
