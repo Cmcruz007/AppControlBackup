@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react"
 import * as XLSX from "xlsx-js-style"
+import TokenGate from "./components/TokenGate"
 import { exportScheduleExcel } from "./scheduleExcel"
 import type {
   AppConfig,
@@ -72,6 +73,28 @@ export default function App() {
   const [executionsData, setExecutionsData] = useState<JobExecutionsResponse | null>(null)
   const [executionsLoading, setExecutionsLoading] = useState(false)
   const [executionsError, setExecutionsError] = useState<string | null>(null)
+  const [authGateOpen, setAuthGateOpen] = useState(false)
+
+  useEffect(() => {
+    function handleUnauthorized() {
+      setAuthGateOpen(true)
+    }
+
+    window.addEventListener("bm:unauthorized", handleUnauthorized)
+
+    // Comprobación inicial: si no hay token, abrir TokenGate al entrar
+    try {
+      const hasToken = !!window.localStorage.getItem("bm.authToken")
+      if (!hasToken) setAuthGateOpen(true)
+    } catch {
+      // ignorar
+    }
+
+    return () => {
+      window.removeEventListener("bm:unauthorized", handleUnauthorized)
+    }
+  }, [])
+
   const [dbJobs, setDbJobs] = useState<string[]>([])
   const [logModalData, setLogModalData] = useState<{ jobName: string; content: string } | null>(null)
   const [versionModalOpen, setVersionModalOpen] = useState(false)
@@ -183,23 +206,22 @@ export default function App() {
       return { rowsCalendario: rows, fullRowsCalendario: fullRows }
     }
 
-   const filtrarJob = (r: JobRowUi) => {
-  if (!r.jobName) return true
+    const filtrarJob = (r: JobRowUi) => {
+      if (!r.jobName) return true
 
-  const name = safeLower(r.jobName)
+      const name = safeLower(r.jobName)
 
-  // En fin de semana solo ocultamos PR/RR de jobs SQL (Veeam).
-  // NO ocultamos jobs de email (Barracuda, VDC, AS400).
-  if (
-    (r.source === "sql" || r.source === "both") &&
-    (name.includes("pr") || name.includes("rr"))
-  ) {
-    return false
-  }
+      // En fin de semana solo ocultamos PR/RR de jobs SQL (Veeam).
+      // NO ocultamos jobs de email (Barracuda, VDC, AS400).
+      if (
+        (r.source === "sql" || r.source === "both") &&
+        (name.includes("pr") || name.includes("rr"))
+      ) {
+        return false
+      }
 
-  return true
-}
-
+      return true
+    }
 
     return {
       rowsCalendario: rows.filter(filtrarJob),
@@ -392,309 +414,316 @@ export default function App() {
   }
 
   return (
-    <div className="app compact-mode">
-      <div className="topbar">
-        <h1>
-          Backup Monitor Pro{" "}
-          <button
-            className="version-badge"
-            onClick={() => setVersionModalOpen(true)}
-            title="Ver historial de cambios"
-          >
-            v{APP_VERSION}
-          </button>
-        </h1>
-        <div className="meta">
-          {lastRun ? `Actualizado ${new Date(lastRun).toLocaleTimeString("es-ES")}` : "Cargando..."}
-        </div>
-      </div>
-
-      <div className="tabs">
-        <div className={`tab ${tab === "dashboard" ? "active" : ""}`} onClick={() => setTab("dashboard")}>
-          Dashboard
-        </div>
-        <div className={`tab ${tab === "history" ? "active" : ""}`} onClick={() => setTab("history")}>
-          Histórico
-        </div>
-
-        {tab !== "executions" && (
-          <div className="window-title">
-            <span className="window-title-main">
-              SITUACIÓN BACKUP DEL DÍA {typeof displayDay === "string" ? displayDay : ""}
-            </span>
-            {displayRange && (
-              <span className="window-title-range">
-                {typeof displayRange === "string" ? displayRange : ""}
-              </span>
-            )}
-          </div>
-        )}
-
-        <div className="flex-spacer" />
-
-        <button
-          type="button"
-          className="tabs-config-btn"
-          onClick={() => openExecutionsView()}
-          title="Backups"
-        >
-          <BackupsIcon size={20} />
-        </button>
-
-        <button
-          type="button"
-          className="tabs-config-btn white-icon"
-          onClick={() => setConfigPanelOpen(true)}
-          title="Configuración"
-        >
-          <WhiteGearIcon size={20} />
-        </button>
-      </div>
-
-      <div className="content">
-        {tab === "dashboard" && (
-          <>
-            <div className="kpis">
-              <Kpi
-                label="Jobs hoy"
-                value={kpis.total}
-                accentColor="#94a3b8"
-                active={statusFilter === "all"}
-                onClick={() => handleDashboardKpiClick("all")}
-              />
-              <Kpi
-                label="Éxitos"
-                value={kpis.success}
-                accentColor="#22c55e"
-                active={statusFilter === "success"}
-                onClick={() => handleDashboardKpiClick("success")}
-              />
-              <Kpi
-                label="Avisos"
-                value={kpis.warning}
-                accentColor="#f59e0b"
-                active={statusFilter === "warning"}
-                onClick={() => handleDashboardKpiClick("warning")}
-              />
-              <Kpi
-                label="Errores"
-                value={kpis.failed}
-                accentColor="#ef4444"
-                active={statusFilter === "failed"}
-                onClick={() => handleDashboardKpiClick("failed")}
-              />
-              <Kpi
-                label="En curso"
-                value={kpis.running + kpis.pending}
-                accentColor="#60a5fa"
-                active={statusFilter === "running"}
-                onClick={() => handleDashboardKpiClick("running")}
-              />
-            </div>
-
-            <div
-              className="toolbar"
-              style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: "12px" }}
+    <>
+      <div className="app compact-mode">
+        <div className="topbar">
+          <h1>
+            Backup Monitor Pro{" "}
+            <button
+              className="version-badge"
+              onClick={() => setVersionModalOpen(true)}
+              title="Ver historial de cambios"
             >
-              <div style={{ display: "flex", width: "100%", alignItems: "center", gap: "10px" }}>
-                <input
-                  placeholder="Buscar..."
-                  value={filter}
-                  onChange={(e) => setFilter(e.target.value)}
-                  className="search-input"
+              v{APP_VERSION}
+            </button>
+          </h1>
+          <div className="meta">
+            {lastRun ? `Actualizado ${new Date(lastRun).toLocaleTimeString("es-ES")}` : "Cargando..."}
+          </div>
+        </div>
+
+        <div className="tabs">
+          <div className={`tab ${tab === "dashboard" ? "active" : ""}`} onClick={() => setTab("dashboard")}>
+            Dashboard
+          </div>
+          <div className={`tab ${tab === "history" ? "active" : ""}`} onClick={() => setTab("history")}>
+            Histórico
+          </div>
+
+          {tab !== "executions" && (
+            <div className="window-title">
+              <span className="window-title-main">
+                SITUACIÓN BACKUP DEL DÍA {typeof displayDay === "string" ? displayDay : ""}
+              </span>
+              {displayRange && (
+                <span className="window-title-range">
+                  {typeof displayRange === "string" ? displayRange : ""}
+                </span>
+              )}
+            </div>
+          )}
+
+          <div className="flex-spacer" />
+
+          <button
+            type="button"
+            className="tabs-config-btn"
+            onClick={() => openExecutionsView()}
+            title="Backups"
+          >
+            <BackupsIcon size={20} />
+          </button>
+
+          <button
+            type="button"
+            className="tabs-config-btn white-icon"
+            onClick={() => setConfigPanelOpen(true)}
+            title="Configuración"
+          >
+            <WhiteGearIcon size={20} />
+          </button>
+        </div>
+
+        <div className="content">
+          {tab === "dashboard" && (
+            <>
+              <div className="kpis">
+                <Kpi
+                  label="Jobs hoy"
+                  value={kpis.total}
+                  accentColor="#94a3b8"
+                  active={statusFilter === "all"}
+                  onClick={() => handleDashboardKpiClick("all")}
                 />
-                <div className="flex-spacer" />
-                <button onClick={() => setEmailModal(true)} style={{ background: "#059669", color: "white" }}>
-                  Enviar
-                </button>
-                <button
-                  onClick={exportToExcel}
-                  disabled={fullRows.length === 0}
-                  style={{ background: "#2563eb", color: "white" }}
-                >
-                  Exportar
-                </button>
-                <button
-                  onClick={handleExportScheduleExcel}
-                  style={{
-                    background: "#1e3a5f",
-                    color: "#f1f5f9",
-                    border: "1px solid #60a5fa",
-                    borderRadius: 6,
-                    padding: "7px 14px",
-                    fontSize: 13,
-                    fontWeight: 600,
-                  }}
-                >
-                  Planificador
-                </button>
-                <button
-                  onClick={refresh}
-                  disabled={loading}
-                  style={{ background: loading ? "#334155" : "#475569", color: "white" }}
-                >
-                  {loading ? "Refrescando..." : "Refrescar"}
-                </button>
+                <Kpi
+                  label="Éxitos"
+                  value={kpis.success}
+                  accentColor="#22c55e"
+                  active={statusFilter === "success"}
+                  onClick={() => handleDashboardKpiClick("success")}
+                />
+                <Kpi
+                  label="Avisos"
+                  value={kpis.warning}
+                  accentColor="#f59e0b"
+                  active={statusFilter === "warning"}
+                  onClick={() => handleDashboardKpiClick("warning")}
+                />
+                <Kpi
+                  label="Errores"
+                  value={kpis.failed}
+                  accentColor="#ef4444"
+                  active={statusFilter === "failed"}
+                  onClick={() => handleDashboardKpiClick("failed")}
+                />
+                <Kpi
+                  label="En curso"
+                  value={kpis.running + kpis.pending}
+                  accentColor="#60a5fa"
+                  active={statusFilter === "running"}
+                  onClick={() => handleDashboardKpiClick("running")}
+                />
               </div>
 
               <div
-                className="category-tabs"
-                style={{ display: "flex", gap: "6px", width: "100%", padding: "4px 0" }}
+                className="toolbar"
+                style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: "12px" }}
               >
-                {JOB_CATEGORIES.map((cat) => {
-                  const isNok = cat.id === "nok"
-                  const isActive = activeCategory === cat.id
+                <div style={{ display: "flex", width: "100%", alignItems: "center", gap: "10px" }}>
+                  <input
+                    placeholder="Buscar..."
+                    value={filter}
+                    onChange={(e) => setFilter(e.target.value)}
+                    className="search-input"
+                  />
+                  <div className="flex-spacer" />
+                  <button onClick={() => setEmailModal(true)} style={{ background: "#059669", color: "white" }}>
+                    Enviar
+                  </button>
+                  <button
+                    onClick={exportToExcel}
+                    disabled={fullRows.length === 0}
+                    style={{ background: "#2563eb", color: "white" }}
+                  >
+                    Exportar
+                  </button>
+                  <button
+                    onClick={handleExportScheduleExcel}
+                    style={{
+                      background: "#1e3a5f",
+                      color: "#f1f5f9",
+                      border: "1px solid #60a5fa",
+                      borderRadius: 6,
+                      padding: "7px 14px",
+                      fontSize: 13,
+                      fontWeight: 600,
+                    }}
+                  >
+                    Planificador
+                  </button>
+                  <button
+                    onClick={refresh}
+                    disabled={loading}
+                    style={{ background: loading ? "#334155" : "#475569", color: "white" }}
+                  >
+                    {loading ? "Refrescando..." : "Refrescar"}
+                  </button>
+                </div>
 
-                  let btnStyle: CSSProperties = {
-                    border: "1px solid var(--border)",
-                    padding: "6px 14px",
-                    borderRadius: "6px",
-                    fontSize: "12px",
-                    fontWeight: 600,
-                    cursor: "pointer",
-                    transition: "all 0.15s ease",
-                  }
+                <div
+                  className="category-tabs"
+                  style={{ display: "flex", gap: "6px", width: "100%", padding: "4px 0" }}
+                >
+                  {JOB_CATEGORIES.map((cat) => {
+                    const isNok = cat.id === "nok"
+                    const isActive = activeCategory === cat.id
 
-                  if (isNok) {
-                    btnStyle.marginLeft = "14px"
-                    btnStyle.background = isActive ? "#e28704" : "rgba(245, 158, 11, 0.2)"
-                    btnStyle.color = isActive ? "#ffffff" : "#f59e0b"
-                    btnStyle.borderColor = "#f59e0b"
-                  } else {
-                    btnStyle.background = isActive ? "#2563eb" : "var(--panel-2)"
-                    btnStyle.color = isActive ? "#ffffff" : "var(--text)"
-                  }
+                    let btnStyle: CSSProperties = {
+                      border: "1px solid var(--border)",
+                      padding: "6px 14px",
+                      borderRadius: "6px",
+                      fontSize: "12px",
+                      fontWeight: 600,
+                      cursor: "pointer",
+                      transition: "all 0.15s ease",
+                    }
 
-                  return (
-                    <button
-                      key={cat.id}
-                      onClick={() => {
-                        setActiveCategory(cat.id)
-                        setStatusFilter("all")
-                      }}
-                      style={btnStyle}
-                    >
-                      {cat.label}
-                    </button>
-                  )
-                })}
+                    if (isNok) {
+                      btnStyle.marginLeft = "14px"
+                      btnStyle.background = isActive ? "#e28704" : "rgba(245, 158, 11, 0.2)"
+                      btnStyle.color = isActive ? "#ffffff" : "#f59e0b"
+                      btnStyle.borderColor = "#f59e0b"
+                    } else {
+                      btnStyle.background = isActive ? "#2563eb" : "var(--panel-2)"
+                      btnStyle.color = isActive ? "#ffffff" : "var(--text)"
+                    }
+
+                    return (
+                      <button
+                        key={cat.id}
+                        onClick={() => {
+                          setActiveCategory(cat.id)
+                          setStatusFilter("all")
+                        }}
+                        style={btnStyle}
+                      >
+                        {cat.label}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+
+              {err && <span className="error-badge">{err}</span>}
+
+              <JobTable
+                rows={filtered}
+                onEditComment={setEditingJobId}
+                onOpenExecutions={openExecutionsView}
+                onOpenLog={(jobName) => {
+                  const row = fullRows.find((r) => r.jobName === jobName)
+                  setLogModalData({ jobName, content: (row as any)?.as400LogContent ?? null })
+                }}
+                sortKey={sortKey}
+                sortDir={sortDir}
+                onSort={toggleSort}
+              />
+            </>
+          )}
+
+          {tab === "history" && (
+            <HistoryTab
+              onWindowChange={handleHistoryWindowChange}
+              config={config}
+              onManualOverrideSaved={handleManualOverrideSaved}
+              onOpenExecutions={openExecutionsView}
+              activeCategory={activeCategory}
+            />
+          )}
+
+          {tab === "executions" && (
+            <ExecutionsTab
+              jobName={selectedJobName}
+              data={executionsData}
+              loading={executionsLoading}
+              error={executionsError}
+              allJobNames={allJobNames}
+              onSelectJob={async (j) => {
+                setSelectedJobName(j)
+                await loadExecutions(j)
+              }}
+              onBack={() => {
+                setSelectedJobName(null)
+                setExecutionsData(null)
+              }}
+              activeCategory={activeCategory}
+            />
+          )}
+        </div>
+
+        <ConfigurationPanel
+          open={configPanelOpen}
+          onClose={() => setConfigPanelOpen(false)}
+          config={config}
+          onSaved={handleConfigUpdated}
+          pinLocked={!pinUnlocked}
+          pinInput={pinInput}
+          setPinInput={setPinInput}
+          onUnlock={unlockWithPin}
+          allJobNames={allJobNames}
+        />
+
+        {editingJobId && editingJob && (
+          <CommentEditor
+            jobName={editingJob.jobName}
+            currentComment={editingOverride?.comment ?? ""}
+            currentStatus={editingOverride?.status ?? normalizeManualStatusUi(editingJob.status)}
+            autoReason={editingJob.reason ?? ""}
+            onSave={saveManualOverride}
+            onClose={() => setEditingJobId(null)}
+          />
+        )}
+
+        {emailModal && (
+          <EmailModal
+            htmlPreview={emailPreviewHtml}
+            day={day}
+            onClose={() => setEmailModal(false)}
+          />
+        )}
+
+        {versionModalOpen && <VersionModal onClose={() => setVersionModalOpen(false)} />}
+
+        {logModalData && (
+          <div className="email-modal-overlay" onClick={() => setLogModalData(null)} style={{ zIndex: 9999 }}>
+            <div
+              className="email-modal-panel"
+              style={{ maxWidth: 900 }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="email-modal-header">
+                <h2>LOG AS/400 - {String(logModalData?.jobName || "Desconocido")}</h2>
+                <button className="email-modal-close" onClick={() => setLogModalData(null)}>
+                  ×
+                </button>
+              </div>
+              <div style={{ padding: 16, overflowY: "auto", maxHeight: "65vh" }}>
+                <pre
+                  style={{
+                    background: "#000",
+                    color: "#0f0",
+                    padding: 16,
+                    borderRadius: 6,
+                    fontFamily: "monospace",
+                    fontSize: 13,
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-all",
+                  }}
+                >
+                  {logModalData?.content
+                    ? String(logModalData.content)
+                    : "⚠️ No hay contenido o no se pudo extraer."}
+                </pre>
               </div>
             </div>
-
-            {err && <span className="error-badge">{err}</span>}
-
-            <JobTable
-              rows={filtered}
-              onEditComment={setEditingJobId}
-              onOpenExecutions={openExecutionsView}
-              onOpenLog={(jobName) => {
-                const row = fullRows.find((r) => r.jobName === jobName)
-                setLogModalData({ jobName, content: (row as any)?.as400LogContent ?? null })
-              }}
-              sortKey={sortKey}
-              sortDir={sortDir}
-              onSort={toggleSort}
-            />
-          </>
-        )}
-
-        {tab === "history" && (
-          <HistoryTab
-            onWindowChange={handleHistoryWindowChange}
-            config={config}
-            onManualOverrideSaved={handleManualOverrideSaved}
-            onOpenExecutions={openExecutionsView}
-            activeCategory={activeCategory}
-          />
-        )}
-
-        {tab === "executions" && (
-          <ExecutionsTab
-            jobName={selectedJobName}
-            data={executionsData}
-            loading={executionsLoading}
-            error={executionsError}
-            allJobNames={allJobNames}
-            onSelectJob={async (j) => {
-              setSelectedJobName(j)
-              await loadExecutions(j)
-            }}
-            onBack={() => {
-              setSelectedJobName(null)
-              setExecutionsData(null)
-            }}
-            activeCategory={activeCategory}
-          />
+          </div>
         )}
       </div>
 
-      <ConfigurationPanel
-        open={configPanelOpen}
-        onClose={() => setConfigPanelOpen(false)}
-        config={config}
-        onSaved={handleConfigUpdated}
-        pinLocked={!pinUnlocked}
-        pinInput={pinInput}
-        setPinInput={setPinInput}
-        onUnlock={unlockWithPin}
-        allJobNames={allJobNames}
+      <TokenGate
+        open={authGateOpen}
+        onClose={() => setAuthGateOpen(false)}
       />
-
-      {editingJobId && editingJob && (
-        <CommentEditor
-          jobName={editingJob.jobName}
-          currentComment={editingOverride?.comment ?? ""}
-          currentStatus={editingOverride?.status ?? normalizeManualStatusUi(editingJob.status)}
-          autoReason={editingJob.reason ?? ""}
-          onSave={saveManualOverride}
-          onClose={() => setEditingJobId(null)}
-        />
-      )}
-
-      {emailModal && (
-        <EmailModal
-          htmlPreview={emailPreviewHtml}
-          day={day}
-          onClose={() => setEmailModal(false)}
-        />
-      )}
-
-      {versionModalOpen && <VersionModal onClose={() => setVersionModalOpen(false)} />}
-
-      {logModalData && (
-        <div className="email-modal-overlay" onClick={() => setLogModalData(null)} style={{ zIndex: 9999 }}>
-          <div
-            className="email-modal-panel"
-            style={{ maxWidth: 900 }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="email-modal-header">
-              <h2>LOG AS/400 - {String(logModalData?.jobName || "Desconocido")}</h2>
-              <button className="email-modal-close" onClick={() => setLogModalData(null)}>
-                ×
-              </button>
-            </div>
-            <div style={{ padding: 16, overflowY: "auto", maxHeight: "65vh" }}>
-              <pre
-                style={{
-                  background: "#000",
-                  color: "#0f0",
-                  padding: 16,
-                  borderRadius: 6,
-                  fontFamily: "monospace",
-                  fontSize: 13,
-                  whiteSpace: "pre-wrap",
-                  wordBreak: "break-all",
-                }}
-              >
-                {logModalData?.content
-                  ? String(logModalData.content)
-                  : "⚠️ No hay contenido o no se pudo extraer."}
-              </pre>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
+    </>
   )
 }
