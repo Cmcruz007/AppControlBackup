@@ -119,9 +119,56 @@ function loadConfig() {
     }
   } catch (e) { console.error('Error cargando config compartida:', e.message || e) }
 
-  return { ...priv, ...shared }
-}
+  const merged = { ...priv, ...shared }
 
+  // ─── Migración automática de overrides antiguos sin timestamp ─────────────
+  // Si un override no tiene fecha, se le asigna ahora.
+  // Esto evita que se ignoren para siempre por la limpieza por ventana (v3.0).
+  // La persistencia real ocurre la próxima vez que el usuario edite cualquier
+  // override (entonces saveConfig escribe con el nuevo formato).
+  if (merged.manualOverrides && typeof merged.manualOverrides === 'object') {
+    const nowIso = new Date().toISOString()
+    let migrated = false
+    const migratedOverrides = {}
+
+    for (const [jobName, ov] of Object.entries(merged.manualOverrides)) {
+      if (ov == null) continue
+
+      if (typeof ov === 'object') {
+        const hasDate =
+          ov.timestamp ||
+          ov.updatedAt ||
+          ov.updated ||
+          ov.modifiedAt ||
+          ov.createdAt ||
+          ov.ts ||
+          ov.date ||
+          ov.manualAt
+
+        if (hasDate) {
+          migratedOverrides[jobName] = ov
+        } else {
+          migratedOverrides[jobName] = { ...ov, timestamp: nowIso }
+          migrated = true
+        }
+      } else {
+        migratedOverrides[jobName] = {
+          comment: String(ov),
+          timestamp: nowIso,
+        }
+        migrated = true
+      }
+    }
+
+    merged.manualOverrides = migratedOverrides
+
+    if (migrated) {
+      console.log('[CONFIG] Migrados overrides antiguos sin timestamp')
+    }
+  }
+
+  return merged
+}
 // ─── Validate ───────────────────────────────────────────────────────────────
 function validateConfigInput(cfg) {
   if (!cfg || typeof cfg !== 'object') return {}
@@ -151,7 +198,40 @@ function validateConfigInput(cfg) {
   if (cfg.toleranceMinutes !== undefined) clean.toleranceMinutes = Math.max(0, Math.min(1440, Number(cfg.toleranceMinutes) || 0))
   if (cfg.pin !== undefined) clean.pin = String(cfg.pin || '').slice(0, 10)
 
-  if (cfg.manualOverrides && typeof cfg.manualOverrides === 'object') clean.manualOverrides = cfg.manualOverrides
+ if (cfg.manualOverrides && typeof cfg.manualOverrides === 'object') {
+  const nowIso = new Date().toISOString()
+  const fixed = {}
+
+  for (const [jobName, ov] of Object.entries(cfg.manualOverrides)) {
+    if (ov == null) continue
+
+    if (typeof ov === 'object') {
+      // Compatibilidad: aceptamos timestamp / updatedAt / etc.
+      const hasDate =
+        ov.timestamp ||
+        ov.updatedAt ||
+        ov.updated ||
+        ov.modifiedAt ||
+        ov.createdAt ||
+        ov.ts ||
+        ov.date ||
+        ov.manualAt
+
+      fixed[jobName] = hasDate
+        ? ov
+        : { ...ov, timestamp: nowIso }
+    } else {
+      // Override legacy guardado como string plano (caso muy antiguo).
+      // Lo convertimos a objeto con timestamp para mantenerlo activo.
+      fixed[jobName] = {
+        comment: String(ov),
+        timestamp: nowIso,
+      }
+    }
+  }
+
+  clean.manualOverrides = fixed
+}
   if (cfg.criticalityByJob && typeof cfg.criticalityByJob === 'object') clean.criticalityByJob = cfg.criticalityByJob
   if (Array.isArray(cfg.veeamDataCloudRules)) clean.veeamDataCloudRules = cfg.veeamDataCloudRules.slice(0, 100)
   if (Array.isArray(cfg.barracudaRules)) clean.barracudaRules = cfg.barracudaRules.slice(0, 100)
