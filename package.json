@@ -8,6 +8,8 @@
     "build:win": "npm run build && electron-builder --win dir"
   },
   "dependencies": {
+    "@azure/msal-browser": "^5.15.0",
+    "@azure/msal-react": "^5.5.0",
     "express": "^5.2.1",
     "marked": "^18.0.5",
     "mssql": "^10.0.0",
