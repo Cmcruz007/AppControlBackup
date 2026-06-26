@@ -115,14 +115,53 @@ async function buildRefreshPayloadForWindow(cfg, inicio, fin, includeSql = true)
 
   // ─── Helpers de ventana ───────────────────────────────────────────────────
 
-  function isSameWindow(date) {
-    if (!date) return false
+ function parseDateFlexible(value) {
+  if (!value) return null
 
-    const d = new Date(date)
-    if (Number.isNaN(d.getTime())) return false
-
-    return d >= inicio && d < fin
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value
   }
+
+  let d = new Date(value)
+
+  if (!Number.isNaN(d.getTime())) {
+    return d
+  }
+
+  // Soporte para timestamps locales tipo "26/06/2026 20:40:03"
+  if (typeof value === 'string') {
+    const s = value.trim()
+
+    const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?$/)
+
+    if (m) {
+      const [, dd, mm, yyyy, hh, mi, ss] = m
+
+      d = new Date(
+        Number(yyyy),
+        Number(mm) - 1,
+        Number(dd),
+        Number(hh),
+        Number(mi),
+        Number(ss || 0)
+      )
+
+      if (!Number.isNaN(d.getTime())) {
+        return d
+      }
+    }
+  }
+
+  return null
+}
+
+function isSameWindow(date) {
+  const d = parseDateFlexible(date)
+  if (!d) return false
+
+  return d >= inicio && d < fin
+}
+
 
   function getOverrideDate(override) {
     if (!override || typeof override !== 'object') return null
@@ -236,9 +275,38 @@ async function buildRefreshPayloadForWindow(cfg, inicio, fin, includeSql = true)
     return row
   }
 
-  const fullRows = [...sqlFullRows, ...vdcRows, ...barraRows, ...as400Rows]
-    .map(cleanRow)
-    .sort((a, b) => new Date(b.nextRun).getTime() - new Date(a.nextRun).getTime())
+
+// ─── Prioridad final de ajustes manuales ──────────────────────────────────
+// REGLA FUNCIONAL:
+// El ajuste manual del operador prevalece SIEMPRE sobre cualquier carga
+// automática, mientras el override esté vigente dentro de la ventana.
+//
+// Esto se aplica al final de todo:
+// - después de SQL/Veeam
+// - después de VDC/Barracuda/AS400
+// - después de cleanRow
+// - después de cualquier estado/comentario automático
+
+function applyManualOverrideFinal(row) {
+  const ov = row?.jobName ? overrides?.[row.jobName] : null
+  if (!ov) return row
+
+  const manualStatus = ov.status ? String(ov.status).trim().toLowerCase() : ''
+  const manualComment = ov.comment ? String(ov.comment).trim() : ''
+
+  return {
+    ...row,
+    ...(manualStatus ? { status: manualStatus } : {}),
+    ...(manualComment ? { reason: manualComment } : {}),
+  }
+}
+
+
+
+ const fullRows = [...sqlFullRows, ...vdcRows, ...barraRows, ...as400Rows]
+  .map(cleanRow)
+  .map(applyManualOverrideFinal)
+  .sort((a, b) => new Date(b.nextRun).getTime() - new Date(a.nextRun).getTime())
 
   return {
     ok: true,
