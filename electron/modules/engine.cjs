@@ -144,30 +144,68 @@ function applyManualOverride(row, overrides, ahora) {
 }
 
 
-function collapseRunningCopyParents(rows) {
-  const safeRows = Array.isArray(rows) ? rows : [];
+function collapseCopyDuplicates(rows) {
+  const safeRows = Array.isArray(rows) ? rows : []
+  if (safeRows.length === 0) return safeRows
 
-  const runningParentsWithChildRunning = new Set(
-    safeRows
-      .filter((r) =>
-        r &&
-        r.status === 'running' &&
-        typeof r.jobName === 'string' &&
-        r.jobName.includes('\\')
-      )
-      .map((r) => String(r.jobName).split('\\')[0].trim())
-      .filter(Boolean)
-  );
+  const statusRank = (s) => {
+    switch (s) {
+      case 'failed':  return 0
+      case 'warning': return 1
+      case 'running': return 2
+      case 'pending': return 3
+      case 'success': return 4
+      default:        return 5
+    }
+  }
 
-  if (!runningParentsWithChildRunning.size) return safeRows;
+  // Indexamos parents (sin '\') y agrupamos hijos por base
+  const parentByName = new Map()
+  const childrenByBase = new Map()
 
-  return safeRows.filter((r) => {
-    if (!r || r.status !== 'running' || !r.jobName) return true;
-    const name = String(r.jobName).trim();
-    return !runningParentsWithChildRunning.has(name);
-  });
+  for (const r of safeRows) {
+    if (!r || typeof r.jobName !== 'string') continue
+    const name = r.jobName.trim()
+
+    if (name.includes('\\')) {
+      const base = name.split('\\')[0].trim()
+      if (!base) continue
+      if (!childrenByBase.has(base)) childrenByBase.set(base, [])
+      childrenByBase.get(base).push(r)
+    } else {
+      parentByName.set(name, r)
+    }
+  }
+
+  const toRemove = new Set()
+
+  for (const [base, children] of childrenByBase) {
+    const parent = parentByName.get(base)
+    if (!parent) continue
+
+    const hasRunningChild = children.some((c) => c && c.status === 'running')
+
+    if (hasRunningChild) {
+      // Comportamiento previo: Veeam reporta progreso en el hijo,
+      // así que mantenemos los hijos y eliminamos el parent.
+      toRemove.add(parent)
+    } else {
+      // Ejecuciones terminadas: mantenemos el parent (nombre limpio)
+      // y promovemos al parent el PEOR estado del hijo, para no ocultar errores.
+      for (const c of children) {
+        if (!c) continue
+        if (statusRank(c.status) < statusRank(parent.status)) {
+          parent.status = c.status
+          parent.reason = c.reason
+          parent.lastResult = c.lastResult
+        }
+        toRemove.add(c)
+      }
+    }
+  }
+
+  return safeRows.filter((r) => !toRemove.has(r))
 }
-
 function processSessions(sessions, emails, ahora, overrides, criticalityByJob = {}) {
   const safeSessions = Array.isArray(sessions) ? sessions : []
   const safeEmails = Array.isArray(emails) ? emails : []
@@ -220,7 +258,7 @@ function processSessions(sessions, emails, ahora, overrides, criticalityByJob = 
     return tB - tA
   })
 
-  const dedupedRows = collapseRunningCopyParents(fullRows)
+  const dedupedRows = collapseCopyDuplicates(fullRows)
   return { fullRows: dedupedRows, filteredRows: dedupedRows.filter((r) => r && r.status !== 'success') }
 }
 
