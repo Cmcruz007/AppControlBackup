@@ -148,18 +148,7 @@ function collapseCopyDuplicates(rows) {
   const safeRows = Array.isArray(rows) ? rows : []
   if (safeRows.length === 0) return safeRows
 
-  const statusRank = (s) => {
-    switch (s) {
-      case 'failed':  return 0
-      case 'warning': return 1
-      case 'running': return 2
-      case 'pending': return 3
-      case 'success': return 4
-      default:        return 5
-    }
-  }
-
-  // Indexamos parents (sin '\') y agrupamos hijos por base
+  // Indexamos parents (sin '\') y agrupamos hijos (con '\') por base
   const parentByName = new Map()
   const childrenByBase = new Map()
 
@@ -179,33 +168,18 @@ function collapseCopyDuplicates(rows) {
 
   const toRemove = new Set()
 
+  // Si hay child(s) para un parent, nos quedamos con el child (nombre largo)
+  // y eliminamos el parent. Esto refleja la sesión real de Veeam.
   for (const [base, children] of childrenByBase) {
     const parent = parentByName.get(base)
-    if (!parent) continue
-
-    const hasRunningChild = children.some((c) => c && c.status === 'running')
-
-    if (hasRunningChild) {
-      // Comportamiento previo: Veeam reporta progreso en el hijo,
-      // así que mantenemos los hijos y eliminamos el parent.
+    if (parent && children.length > 0) {
       toRemove.add(parent)
-    } else {
-      // Ejecuciones terminadas: mantenemos el parent (nombre limpio)
-      // y promovemos al parent el PEOR estado del hijo, para no ocultar errores.
-      for (const c of children) {
-        if (!c) continue
-        if (statusRank(c.status) < statusRank(parent.status)) {
-          parent.status = c.status
-          parent.reason = c.reason
-          parent.lastResult = c.lastResult
-        }
-        toRemove.add(c)
-      }
     }
   }
 
   return safeRows.filter((r) => !toRemove.has(r))
 }
+
 function processSessions(sessions, emails, ahora, overrides, criticalityByJob = {}) {
   const safeSessions = Array.isArray(sessions) ? sessions : []
   const safeEmails = Array.isArray(emails) ? emails : []
