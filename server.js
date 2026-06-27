@@ -4,11 +4,11 @@ const proxyUrl = process.env.HTTPS_PROXY || process.env.HTTP_PROXY
 const express = require('express')
 const path = require('path')
 const fs = require('fs')
-const crypto = require('crypto')
 const https = require('https')
 const http = require('http')
 
 const { logGraphError } = require('./electron/modules/utils.cjs')
+const { verifyEntraToken } = require('./electron/modules/entraAuth.cjs')
 const { loadConfig, saveConfig, isElectron } = require('./electron/modules/config.cjs')
 const {
   closeCachedSqlPool,
@@ -67,8 +67,8 @@ const pfxPath = process.env.BM_PFX_PATH || path.join(__dirname, 'Certificado', '
 const pfxPassword = process.env.BM_PFX_PASSWORD || ''
 
 if (!AUTH_TOKEN) {
-  console.warn('⚠️  BM_AUTH_TOKEN no definido. La API NO tiene autenticacion.')
-  console.warn('   Define BM_AUTH_TOKEN en las variables de entorno para produccion.')
+  console.warn('⚠️  BM_AUTH_TOKEN no definido. La API NO tiene autenticacion por token clásico.')
+  console.warn('   En producción debe existir BM_AUTH_TOKEN o validación Entra ID activa.')
 }
 
 // ─── Estado global ──────────────────────────────────────────────────────────
@@ -114,6 +114,24 @@ function safeString(value, fallback = '') {
 
 function normalizeStatus(value) {
   return safeString(value).trim().toLowerCase()
+}
+
+function formatBackupDateFromWindow(windowStartIso) {
+  const d = new Date(windowStartIso)
+
+  if (Number.isNaN(d.getTime())) {
+    return new Date().toLocaleDateString('es-ES', {
+      day: '2-digit',
+      month: 'long',
+      year: 'numeric',
+    }).toUpperCase()
+  }
+
+  return d.toLocaleDateString('es-ES', {
+    day: '2-digit',
+    month: 'long',
+    year: 'numeric',
+  }).toUpperCase()
 }
 
 function getPayloadSummary(payload) {
@@ -210,12 +228,8 @@ function decorateLogAvailability(row) {
 
   return {
     ...row,
-
-    // Flags originales
     hasLog: true,
     logAvailable: true,
-
-    // Flags compatibles por si el frontend mira otros nombres
     hasEmailLog: true,
     emailLogAvailable: true,
     canOpenLog: true,
@@ -419,7 +433,7 @@ async function buildRefreshPayloadForWindow(cfg, inicio, fin, includeSql = true)
 
   return {
     ok: true,
-    rows: fullRows.filter((r) => r.status !== 'success'),
+    rows: fullRows.filter((r) => normalizeStatus(r.status) !== 'success'),
     fullRows,
     ts: ahora.toISOString(),
     windowStart: inicio.toISOString(),
@@ -519,15 +533,9 @@ async function sendDailyReport() {
     }
 
     /*
-      FIX CRITICO S-1:
-      El correo diario NO debe usar un lastPayload antiguo o desacoplado.
-      Antes de construir el HTML se fuerza un refresh real.
-      Ese refresh actualiza lastPayload.
-      Por tanto:
-        - /api/status
-        - la UI al abrir https://dashboard
-        - el HTML enviado por correo
-      quedan basados en el mismo snapshot.
+      FIX CRITICO:
+      El correo diario debe usar el mismo snapshot que verá la UI.
+      Por eso se fuerza siempre un refresh justo antes de generar el HTML.
     */
     console.log('[S-1] Forzando refresh previo al envio para sincronizar correo y dashboard...')
 
@@ -576,12 +584,12 @@ async function sendDailyReport() {
 
     console.log('[S-1] Destinatarios:', to)
 
+    const backupDateStr = formatBackupDateFromWindow(data.windowStart)
+    const subject = `Informe Backup ${backupDateStr}`
+
+    console.log('[S-1] Subject:', subject)
+
     const bodyHtml = buildEmailHtml(data)
-    const subject = `Informe Backup ${new Date().toLocaleDateString('es-ES', {
-      day: '2-digit',
-      month: 'long',
-      year: 'numeric',
-    }).toUpperCase()}`
 
     console.log('[S-1] Llamando a sendGraphEmail...')
 
@@ -617,8 +625,10 @@ function startDailyReportScheduler() {
     const today = getLocalDateKey(now)
     const lastSentDate = getLastDailyReportDate()
 
-    if (now.getHours() !== 17 || now.getMinutes() !== 0) return
+    if (now.getHours() !== 17) return
+    if (now.getMinutes() > 1) return
     if (dailyReportRunning) return
+
     if (lastSentDate === today) {
       console.log('[S-1] Informe diario ya enviado hoy:', today)
       return
@@ -653,19 +663,36 @@ if (fs.existsSync(distPath)) {
 
 // ─── Middleware de autenticación ────────────────────────────────────────────
 
-function authMiddleware(req, res, next) {
-  if (!AUTH_TOKEN) return next()
-
+async function authMiddleware(req, res, next) {
   if (!req.path.startsWith('/api/')) return next()
 
   const header = req.headers.authorization || ''
-  const token = header.startsWith('Bearer ')
-    ? header.slice(7)
-    : req.query?.token || ''
+  const bearerToken = header.startsWith('Bearer ')
+    ? header.slice(7).trim()
+    : ''
 
-  if (token === AUTH_TOKEN) return next()
+  const queryToken = req.query?.token || ''
 
-  return res.status(401).json({ ok: false, error: 'No autorizado' })
+  // 1) Fallback actual: BM_AUTH_TOKEN.
+  if (AUTH_TOKEN && (bearerToken === AUTH_TOKEN || queryToken === AUTH_TOKEN)) {
+    return next()
+  }
+
+  // 2) Futuro: Microsoft Entra ID.
+  try {
+    if (bearerToken) {
+      const decoded = await verifyEntraToken(bearerToken)
+      req.entraUser = decoded
+      return next()
+    }
+  } catch {
+    // Si no valida como Entra, cae al 401.
+  }
+
+  return res.status(401).json({
+    ok: false,
+    error: 'No autorizado',
+  })
 }
 
 app.use(authMiddleware)
