@@ -4,7 +4,6 @@ const proxyUrl = process.env.HTTPS_PROXY || process.env.HTTP_PROXY
 const express = require('express')
 const path = require('path')
 const fs = require('fs')
-const crypto = require('crypto')
 const https = require('https')
 const http = require('http')
 
@@ -68,8 +67,8 @@ const pfxPath = process.env.BM_PFX_PATH || path.join(__dirname, 'Certificado', '
 const pfxPassword = process.env.BM_PFX_PASSWORD || ''
 
 if (!AUTH_TOKEN) {
-  console.warn('⚠️  BM_AUTH_TOKEN no definido. La API NO tiene autenticacion.')
-  console.warn('   Define BM_AUTH_TOKEN en las variables de entorno para produccion.')
+  console.warn('⚠️  BM_AUTH_TOKEN no definido. La API NO tiene autenticacion por token clásico.')
+  console.warn('   En producción debe existir BM_AUTH_TOKEN o validación Entra ID activa.')
 }
 
 // ─── Estado global ──────────────────────────────────────────────────────────
@@ -111,6 +110,57 @@ function safeString(value, fallback = '') {
   if (value === null || value === undefined) return fallback
   if (typeof value === 'string') return value
   return String(value)
+}
+
+function normalizeStatus(value) {
+  return safeString(value).trim().toLowerCase()
+}
+
+function formatBackupDateFromWindow(windowStartIso) {
+  const d = new Date(windowStartIso)
+
+  if (Number.isNaN(d.getTime())) {
+    return new Date().toLocaleDateString('es-ES', {
+      day: '2-digit',
+      month: 'long',
+      year: 'numeric',
+    }).toUpperCase()
+  }
+
+  return d.toLocaleDateString('es-ES', {
+    day: '2-digit',
+    month: 'long',
+    year: 'numeric',
+  }).toUpperCase()
+}
+
+function getPayloadSummary(payload) {
+  const rows = Array.isArray(payload?.fullRows) ? payload.fullRows : []
+
+  const summary = {
+    total: rows.length,
+    success: 0,
+    warning: 0,
+    failed: 0,
+    error: 0,
+    running: 0,
+    pending: 0,
+    other: 0,
+  }
+
+  for (const row of rows) {
+    const status = normalizeStatus(row?.status)
+
+    if (status === 'success') summary.success += 1
+    else if (status === 'warning' || status === 'warn') summary.warning += 1
+    else if (status === 'failed') summary.failed += 1
+    else if (status === 'error') summary.error += 1
+    else if (status === 'running') summary.running += 1
+    else if (status === 'pending') summary.pending += 1
+    else summary.other += 1
+  }
+
+  return summary
 }
 
 function sanitizeRowForFrontend(row) {
@@ -178,12 +228,8 @@ function decorateLogAvailability(row) {
 
   return {
     ...row,
-
-    // Flags originales
     hasLog: true,
     logAvailable: true,
-
-    // Flags compatibles por si el frontend mira otros nombres
     hasEmailLog: true,
     emailLogAvailable: true,
     canOpenLog: true,
@@ -387,7 +433,7 @@ async function buildRefreshPayloadForWindow(cfg, inicio, fin, includeSql = true)
 
   return {
     ok: true,
-    rows: fullRows.filter((r) => r.status !== 'success'),
+    rows: fullRows.filter((r) => normalizeStatus(r.status) !== 'success'),
     fullRows,
     ts: ahora.toISOString(),
     windowStart: inicio.toISOString(),
@@ -444,7 +490,12 @@ async function runRefresh() {
       })
     }
 
-    console.log(`[REFRESH] OK — ${payload.fullRows.length} jobs, ${new Date().toLocaleTimeString()}`)
+    const summary = getPayloadSummary(payload)
+
+    console.log(
+      `[REFRESH] OK — total=${summary.total}, ok=${summary.success}, avisos=${summary.warning}, errores=${summary.failed + summary.error}, running=${summary.running}, pending=${summary.pending}, ${new Date().toLocaleTimeString()}`
+    )
+
     return payload
   } catch (e) {
     logGraphError('RUN_REFRESH_ERROR', {
@@ -472,24 +523,45 @@ async function sendDailyReport() {
     console.log('[S-1] Generando informe diario...')
     console.log('[S-1] ENV BM_DAILY_REPORT_TO:', JSON.stringify(process.env.BM_DAILY_REPORT_TO))
 
-    if (!lastPayload || !Array.isArray(lastPayload.fullRows)) {
-      console.log('[S-1] No hay datos disponibles todavía. Ejecutando refresh previo...')
+    const cfg = loadConfig()
+    const hasSql = !!cfg?.sql
+    const hasGraph = !!cfg?.graph?.tenantId
 
-      const payload = await runRefresh()
-
-      if (!payload?.ok || !Array.isArray(payload.fullRows)) {
-        console.log('[S-1] No se pudo generar informe: no hay payload válido')
-        return false
-      }
+    if (!hasSql && !hasGraph) {
+      console.log('[S-1] No se pudo generar informe: falta configuracion SQL o Graph')
+      return false
     }
 
-    const cfg = loadConfig()
+    /*
+      FIX CRITICO:
+      El correo diario debe usar el mismo snapshot que verá la UI.
+      Por eso se fuerza siempre un refresh justo antes de generar el HTML.
+    */
+    console.log('[S-1] Forzando refresh previo al envio para sincronizar correo y dashboard...')
+
+    const freshPayload = await runRefresh()
+
+    if (!freshPayload?.ok || !Array.isArray(freshPayload.fullRows)) {
+      console.log('[S-1] No se pudo generar informe: refresh previo no devolvio payload valido')
+      return false
+    }
+
     const data = lastPayload
 
     if (!data || !Array.isArray(data.fullRows)) {
-      console.log('[S-1] Payload no válido después del refresh')
+      console.log('[S-1] Payload no valido despues del refresh previo')
       return false
     }
+
+    const summary = getPayloadSummary(data)
+
+    console.log('[S-1] Snapshot usado para email:')
+    console.log('[S-1]   windowStart:', data.windowStart)
+    console.log('[S-1]   windowEnd  :', data.windowEnd)
+    console.log('[S-1]   ts         :', data.ts)
+    console.log(
+      `[S-1]   resumen    : total=${summary.total}, ok=${summary.success}, avisos=${summary.warning}, errores=${summary.failed + summary.error}, running=${summary.running}, pending=${summary.pending}, other=${summary.other}`
+    )
 
     const fromEnv = (process.env.BM_DAILY_REPORT_TO || '').trim()
     const fromCfg = cfg?.dailyReport?.recipients
@@ -512,12 +584,12 @@ async function sendDailyReport() {
 
     console.log('[S-1] Destinatarios:', to)
 
+    const backupDateStr = formatBackupDateFromWindow(data.windowStart)
+    const subject = `Informe Backup ${backupDateStr}`
+
+    console.log('[S-1] Subject:', subject)
+
     const bodyHtml = buildEmailHtml(data)
-    const subject = `Informe Backup ${new Date().toLocaleDateString('es-ES', {
-      day: '2-digit',
-      month: 'long',
-      year: 'numeric',
-    }).toUpperCase()}`
 
     console.log('[S-1] Llamando a sendGraphEmail...')
 
@@ -553,8 +625,10 @@ function startDailyReportScheduler() {
     const today = getLocalDateKey(now)
     const lastSentDate = getLastDailyReportDate()
 
-    if (now.getHours() !== 17 || now.getMinutes() !== 0) return
+    if (now.getHours() !== 17) return
+    if (now.getMinutes() > 1) return
     if (dailyReportRunning) return
+
     if (lastSentDate === today) {
       console.log('[S-1] Informe diario ya enviado hoy:', today)
       return
@@ -600,13 +674,11 @@ async function authMiddleware(req, res, next) {
   const queryToken = req.query?.token || ''
 
   // 1) Fallback actual: BM_AUTH_TOKEN.
-  // Se mantiene para no romper producción mientras preparamos Entra ID.
   if (AUTH_TOKEN && (bearerToken === AUTH_TOKEN || queryToken === AUTH_TOKEN)) {
     return next()
   }
 
   // 2) Futuro: Microsoft Entra ID.
-  // Esto funcionará cuando el frontend mande un access_token válido.
   try {
     if (bearerToken) {
       const decoded = await verifyEntraToken(bearerToken)
@@ -622,6 +694,8 @@ async function authMiddleware(req, res, next) {
     error: 'No autorizado',
   })
 }
+
+app.use(authMiddleware)
 
 // ─── API Endpoints ──────────────────────────────────────────────────────────
 
@@ -1051,6 +1125,9 @@ app.get('/api/health', (_req, res) => {
     totalJobs: lastPayload?.fullRows?.length ?? 0,
     mode: isElectron ? 'electron' : 'express',
     dailyReportLastSent: getLastDailyReportDate(),
+    summary: getPayloadSummary(lastPayload),
+    windowStart: lastPayload?.windowStart || null,
+    windowEnd: lastPayload?.windowEnd || null,
   })
 })
 
