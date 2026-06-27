@@ -337,66 +337,80 @@ async function getJobExecutionsFromEmailHistory(cfg, rule, jobName, limit = 200,
   const allEmails = await getEmailsInRange(cfg, inicio, fin)
 
   const senderRule = normalizeText(rule?.sender)
-const subjectRule = normalizeText(rule?.subjectContains || rule?.title || rule?.name || jobName)
+  const subjectRule = normalizeText(rule?.subjectContains || rule?.title || rule?.name || jobName)
 
-// Escape para regex
-const escapeRegex = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  // Escape para regex
+  const escapeRegex = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
-// Para subjectRule construimos una regex que matchea como "palabra exacta"
-// para evitar que "Backup SD" matche "Backup SDB/TGT"
-const subjectRegex = subjectRule
-  ? new RegExp(`(^|[^a-z0-9])${escapeRegex(subjectRule)}([^a-z0-9]|$)`, 'i')
-  : null
+  // Para subjectRule construimos una regex que matchea como "palabra exacta"
+  // para evitar que "Backup SD" matche "Backup SDB/TGT"
+  const subjectRegex = subjectRule
+    ? new RegExp(`(^|[^a-z0-9])${escapeRegex(subjectRule)}([^a-z0-9]|$)`, 'i')
+    : null
 
-const filtered = (Array.isArray(allEmails) ? allEmails : [])
-  .filter((m) => {
-    const fromAddr = normalizeText(m?.from?.emailAddress?.address)
-    const senderAddr = normalizeText(m?.sender?.emailAddress?.address)
-    const sender = senderAddr || fromAddr
-    const subject = normalizeText(m?.subject)
+  const filtered = (Array.isArray(allEmails) ? allEmails : [])
+    .filter((m) => {
+      const fromAddr = normalizeText(m?.from?.emailAddress?.address)
+      const senderAddr = normalizeText(m?.sender?.emailAddress?.address)
+      const sender = senderAddr || fromAddr
+      const subject = normalizeText(m?.subject)
 
-    const senderOk =
-      !senderRule ||
-      !sender ||
-      sender.includes(senderRule) ||
-      senderRule.includes(sender) ||
-      fromAddr.includes(senderRule) ||
-      senderRule.includes(fromAddr)
+      const senderOk =
+        !senderRule ||
+        !sender ||
+        sender.includes(senderRule) ||
+        senderRule.includes(sender) ||
+        fromAddr.includes(senderRule) ||
+        senderRule.includes(fromAddr)
 
-    const isBarracuda =
-      sender.includes('barracuda') ||
-      fromAddr.includes('barracuda')
+      const isBarracuda =
+        sender.includes('barracuda') ||
+        fromAddr.includes('barracuda')
 
-    const subjectOk =
-      !subjectRegex ||
-      subjectRegex.test(subject) ||
-      (isBarracuda && /backup\s+report/i.test(subject))
+      const subjectOk =
+        !subjectRegex ||
+        subjectRegex.test(subject) ||
+        (isBarracuda && /backup\s+report/i.test(subject))
 
-    return senderOk && subjectOk
-  })
+      return senderOk && subjectOk
+    })
     .sort((a, b) => new Date(b.receivedDateTime).getTime() - new Date(a.receivedDateTime).getTime())
     .slice(0, Number(limit) || 200)
 
   const ruleSource = detectRuleSource(rule)
 
-  // Procesar en paralelo controlado (8 a la vez para no saturar Graph)
+  // Procesar en paralelo controlado
   const executions = []
   const concurrency = 8
+
   for (let i = 0; i < filtered.length; i += concurrency) {
     const batch = filtered.slice(i, i + concurrency)
+
     const batchResults = await Promise.all(batch.map(async (m, idx) => {
       const baseIndex = i + idx
+
       let parsed = null
+      let as400LogContent = null
+      let logContent = null
+      let bodyContent = null
 
       try {
         if (ruleSource === 'as400') {
-          const txt = await fetchAs400Attachment(cfg, m.id)
-          parsed = parseAs400Attachment(txt)
+          as400LogContent = await fetchAs400Attachment(cfg, m.id)
+          logContent = as400LogContent
+          parsed = parseAs400Attachment(as400LogContent)
         } else if (ruleSource === 'barracuda') {
-          const body = await getMessageBody(cfg, m.id)
-          parsed = parseBarracudaBody(body)
+          bodyContent = await getMessageBody(cfg, m.id)
+          logContent = bodyContent
+          parsed = parseBarracudaBody(bodyContent)
         } else if (ruleSource === 'vdc') {
           parsed = parseVdcBody(m)
+        } else if (m?.hasAttachments) {
+          // Fallback: si tiene adjunto pero la regla no se detecta como AS400,
+          // intentamos cargarlo igualmente para que el modal pueda mostrarlo.
+          as400LogContent = await fetchAs400Attachment(cfg, m.id)
+          logContent = as400LogContent
+          parsed = parseAs400Attachment(as400LogContent)
         }
       } catch (err) {
         logGraphError('PARSER_EXCEPTION', {
@@ -409,30 +423,55 @@ const filtered = (Array.isArray(allEmails) ? allEmails : [])
       const inferred = inferExecutionStatusFromRule(m, rule)
       const status = parsed?.status || inferred.status
 
+      const hasLogContent = Boolean(logContent || as400LogContent || bodyContent)
+
       return {
         id: m.id || `mail-${baseIndex}`,
+
         start: parsed?.startTime || m.receivedDateTime || null,
         end: parsed?.endTime || m.receivedDateTime || null,
         duration: parsed?.durationMs ?? null,
+
         status,
         result: status,
+
         reason: parsed?.code === 0
           ? 'Backup correcto'
           : parsed?.code != null
             ? `Código finalización: ${parsed.code}`
             : inferred.reason,
+
         source: 'email',
         subject: m.subject || '',
         bodyPreview: m.bodyPreview || '',
         hasAttachments: !!m.hasAttachments,
+
+        // ✅ Contenido real para modal de log
+        as400LogContent: as400LogContent || null,
+        logContent: logContent || null,
+        logText: logContent || null,
+        emailLog: logContent || null,
+        body: bodyContent || null,
+        bodyContent: bodyContent || null,
+
+        // ✅ Flags para frontend
+        hasLog: hasLogContent,
+        logAvailable: hasLogContent,
+        hasEmailLog: hasLogContent,
+        emailLogAvailable: hasLogContent,
+        canOpenLog: hasLogContent,
+        logIcon: hasLogContent,
+
         // Extras Barracuda
         size: parsed?.size || null,
         items: parsed?.items || null,
+
         // Meta
         parserSource: ruleSource,
         parsed: !!parsed,
       }
     }))
+
     executions.push(...batchResults)
   }
 

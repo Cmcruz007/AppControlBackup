@@ -82,7 +82,6 @@ export default function App() {
 
     window.addEventListener("bm:unauthorized", handleUnauthorized)
 
-    // Comprobación inicial: si no hay token, abrir TokenGate al entrar
     try {
       const hasToken = !!window.localStorage.getItem("bm.authToken")
       if (!hasToken) setAuthGateOpen(true)
@@ -96,14 +95,16 @@ export default function App() {
   }, [])
 
   const [dbJobs, setDbJobs] = useState<string[]>([])
-  const [logModalData, setLogModalData] = useState<{ jobName: string; content: string } | null>(null)
+  const [logModalData, setLogModalData] = useState<{ jobName: string; content: string | null } | null>(null)
   const [versionModalOpen, setVersionModalOpen] = useState(false)
 
   const refresh = useCallback(async () => {
     setLoading(true)
     setErr(null)
+
     try {
       const p = ((await api().refresh()) as RefreshPayload | null) ?? null
+
       if ((p as any)?.ok) {
         setRows(((p as any).rows ?? []) as JobRowUi[])
         setFullRows(((p as any).fullRows ?? []) as JobRowUi[])
@@ -139,7 +140,16 @@ export default function App() {
     api()
       .listJobs()
       .then((res: any) => {
-        if (res?.ok && Array.isArray(res.jobs)) setDbJobs(res.jobs.filter(Boolean))
+        if (res?.ok && Array.isArray(res.jobs)) {
+          setDbJobs(
+            res.jobs
+              .map((x: any) => {
+                if (typeof x === "string") return x
+                return x?.jobName || x?.name || x?.title || ""
+              })
+              .filter(Boolean)
+          )
+        }
       })
       .catch(console.error)
 
@@ -155,8 +165,8 @@ export default function App() {
       }
     })
 
-    // Polling para modo Express (sin IPC push)
     let pollingId: ReturnType<typeof setInterval> | null = null
+
     if (!api().onAutoUpdate) {
       pollingId = setInterval(() => refresh(), 5 * 60 * 1000)
     }
@@ -188,13 +198,16 @@ export default function App() {
 
   const allJobNames = useMemo(() => {
     const names = new Set<string>(dbJobs.filter(Boolean))
+
     fullRows.forEach((r) => {
-      if (r?.jobName) names.add(r.jobName)
+      if (r?.jobName) names.add(String(r.jobName))
     })
+
     rows.forEach((r) => {
-      if (r?.jobName) names.add(r.jobName)
+      if (r?.jobName) names.add(String(r.jobName))
     })
-    return Array.from(names).sort((a, b) => a.localeCompare(b, "es", { sensitivity: "base" }))
+
+    return Array.from(names).sort((a, b) => String(a).localeCompare(String(b), "es", { sensitivity: "base" }))
   }, [dbJobs, fullRows, rows])
 
   const { rowsCalendario, fullRowsCalendario } = useMemo(() => {
@@ -211,8 +224,6 @@ export default function App() {
 
       const name = safeLower(r.jobName)
 
-      // En fin de semana solo ocultamos PR/RR de jobs SQL (Veeam).
-      // NO ocultamos jobs de email (Barracuda, VDC, AS400).
       if (
         (r.source === "sql" || r.source === "both") &&
         (name.includes("pr") || name.includes("rr"))
@@ -236,7 +247,6 @@ export default function App() {
   const filtered = useMemo(() => {
     let source = fullRowsCalendario
 
-    // 1) Si hay categoría seleccionada, manda la categoría (filtros mutuamente excluyentes)
     if (activeCategory !== "all") {
       source = source.filter((r) => {
         const name = safeLower(r.jobName || "")
@@ -258,10 +268,12 @@ export default function App() {
         if (activeCategory === "vdc") {
           return (
             name.includes("veeam") &&
-            (name.includes("exchange") ||
+            (
+              name.includes("exchange") ||
               name.includes("sharepoint") ||
               name.includes("onedrive") ||
-              name.includes("vdc"))
+              name.includes("vdc")
+            )
           )
         }
 
@@ -278,9 +290,7 @@ export default function App() {
 
         return true
       })
-    }
-    // 2) Solo si NO hay categoría, aplicamos filtro de estado/KPI
-    else if (statusFilter !== "all") {
+    } else if (statusFilter !== "all") {
       source = source.filter((r) => {
         if (statusFilter === "running") return r.status === "running" || r.status === "pending"
         return r.status === statusFilter
@@ -316,6 +326,7 @@ export default function App() {
 
       const va = get(a)
       const vb = get(b)
+
       return va < vb ? -1 * dir : va > vb ? 1 * dir : 0
     })
   }, [fullRowsCalendario, filter, statusFilter, sortKey, sortDir, activeCategory])
@@ -368,8 +379,9 @@ export default function App() {
 
     const nextOverrides = { ...((currentCfg as any).manualOverrides ?? {}) }
 
-    if (!override) delete nextOverrides[jobName]
-    else {
+    if (!override) {
+      delete nextOverrides[jobName]
+    } else {
       nextOverrides[jobName] = {
         status: normalizeManualStatusUi(override.status),
         timestamp: new Date().toISOString(),
@@ -388,6 +400,85 @@ export default function App() {
     await handleManualOverrideSaved(nextCfg)
   }
 
+async function reloadJobsDirectory() {
+    try {
+      const res = await api().listJobs()
+
+      if (res?.ok && Array.isArray(res.jobs)) {
+        setDbJobs(
+          res.jobs
+            .map((x: any) => {
+              if (typeof x === "string") return x
+              return x?.jobName || x?.name || x?.title || ""
+            })
+            .filter(Boolean)
+        )
+      }
+    } catch {
+      // si falla listJobs, seguimos con refresh
+    }
+
+    try {
+      const p = ((await api().refresh()) as RefreshPayload | null) ?? null
+
+      if ((p as any)?.ok) {
+        setRows(((p as any).rows ?? []) as JobRowUi[])
+        setFullRows(((p as any).fullRows ?? []) as JobRowUi[])
+        setLastRun((p as any).ts ?? null)
+
+        if ((p as any).windowStart) {
+          setWindowStart((p as any).windowStart)
+        }
+
+        if ((p as any).windowEnd) {
+          setWindowEnd((p as any).windowEnd)
+        }
+      }
+    } catch {
+      // evitamos romper la navegación si el refresh falla puntualmente
+    }
+  }
+
+async function reloadJobsDirectory() {
+    try {
+      const res = await api().listJobs()
+
+      if (res?.ok && Array.isArray(res.jobs)) {
+        setDbJobs(
+          res.jobs
+            .map((x: any) => {
+              if (typeof x === "string") return x
+              return x?.jobName || x?.name || x?.title || ""
+            })
+            .filter(Boolean)
+        )
+      }
+    } catch {
+      // Si falla listJobs, intentamos refrescar estado igualmente.
+    }
+
+    try {
+      const p = ((await api().refresh()) as RefreshPayload | null) ?? null
+
+      if ((p as any)?.ok) {
+        setRows(((p as any).rows ?? []) as JobRowUi[])
+        setFullRows(((p as any).fullRows ?? []) as JobRowUi[])
+        setLastRun((p as any).ts ?? null)
+
+        if ((p as any).windowStart) {
+          setWindowStart((p as any).windowStart)
+        }
+
+        if ((p as any).windowEnd) {
+          setWindowEnd((p as any).windowEnd)
+        }
+      }
+    } catch {
+      // No rompemos la navegación si el refresh falla puntualmente.
+    }
+  }
+
+
   async function loadExecutions(jobName: string | null) {
     setExecutionsError(null)
     setExecutionsLoading(true)
@@ -395,6 +486,7 @@ export default function App() {
 
     try {
       const res = (await api().getJobExecutions(jobName || "", 200)) as JobExecutionsResponse
+
       if (res?.ok) setExecutionsData(res)
       else setExecutionsError(res?.error ?? "Error al cargar")
     } catch (e: any) {
@@ -404,13 +496,61 @@ export default function App() {
     }
   }
 
-  async function openExecutionsView(jobName?: any) {
+ async function openExecutionsView(jobName?: any) {
     const targetJob = typeof jobName === "string" && jobName.trim() ? jobName.trim() : null
+
     setTab("executions")
     setSelectedJobName(targetJob)
     setExecutionsError(null)
     setExecutionsData(null)
-    if (targetJob) await loadExecutions(targetJob)
+
+    if (targetJob) {
+      await loadExecutions(targetJob)
+    } else {
+      await reloadJobsDirectory()
+    }
+  }
+
+useEffect(() => {
+    if (tab === "executions" && !selectedJobName && allJobNames.length === 0) {
+      reloadJobsDirectory()
+    }
+  }, [tab, selectedJobName, allJobNames.length])
+
+
+  async function openLogModal(jobName: string) {
+    setLogModalData({
+      jobName,
+      content: "Cargando log...",
+    })
+
+    try {
+      const res = await api().getJobExecutions(jobName, 1)
+
+      const execution = Array.isArray((res as any)?.executions)
+        ? (res as any).executions[0]
+        : null
+
+      const content =
+        execution?.as400LogContent ??
+        execution?.logContent ??
+        execution?.logText ??
+        execution?.emailLog ??
+        execution?.bodyContent ??
+        execution?.body ??
+        execution?.bodyPreview ??
+        null
+
+      setLogModalData({
+        jobName,
+        content,
+      })
+    } catch {
+      setLogModalData({
+        jobName,
+        content: null,
+      })
+    }
   }
 
   return (
@@ -427,16 +567,24 @@ export default function App() {
               v{APP_VERSION}
             </button>
           </h1>
+
           <div className="meta">
             {lastRun ? `Actualizado ${new Date(lastRun).toLocaleTimeString("es-ES")}` : "Cargando..."}
           </div>
         </div>
 
         <div className="tabs">
-          <div className={`tab ${tab === "dashboard" ? "active" : ""}`} onClick={() => setTab("dashboard")}>
+          <div
+            className={`tab ${tab === "dashboard" ? "active" : ""}`}
+            onClick={() => setTab("dashboard")}
+          >
             Dashboard
           </div>
-          <div className={`tab ${tab === "history" ? "active" : ""}`} onClick={() => setTab("history")}>
+
+          <div
+            className={`tab ${tab === "history" ? "active" : ""}`}
+            onClick={() => setTab("history")}
+          >
             Histórico
           </div>
 
@@ -445,6 +593,7 @@ export default function App() {
               <span className="window-title-main">
                 SITUACIÓN BACKUP DEL DÍA {typeof displayDay === "string" ? displayDay : ""}
               </span>
+
               {displayRange && (
                 <span className="window-title-range">
                   {typeof displayRange === "string" ? displayRange : ""}
@@ -485,6 +634,7 @@ export default function App() {
                   active={statusFilter === "all"}
                   onClick={() => handleDashboardKpiClick("all")}
                 />
+
                 <Kpi
                   label="Éxitos"
                   value={kpis.success}
@@ -492,6 +642,7 @@ export default function App() {
                   active={statusFilter === "success"}
                   onClick={() => handleDashboardKpiClick("success")}
                 />
+
                 <Kpi
                   label="Avisos"
                   value={kpis.warning}
@@ -499,6 +650,7 @@ export default function App() {
                   active={statusFilter === "warning"}
                   onClick={() => handleDashboardKpiClick("warning")}
                 />
+
                 <Kpi
                   label="Errores"
                   value={kpis.failed}
@@ -506,6 +658,7 @@ export default function App() {
                   active={statusFilter === "failed"}
                   onClick={() => handleDashboardKpiClick("failed")}
                 />
+
                 <Kpi
                   label="En curso"
                   value={kpis.running + kpis.pending}
@@ -517,7 +670,12 @@ export default function App() {
 
               <div
                 className="toolbar"
-                style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: "12px" }}
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "flex-start",
+                  gap: "12px",
+                }}
               >
                 <div style={{ display: "flex", width: "100%", alignItems: "center", gap: "10px" }}>
                   <input
@@ -526,10 +684,13 @@ export default function App() {
                     onChange={(e) => setFilter(e.target.value)}
                     className="search-input"
                   />
+
                   <div className="flex-spacer" />
+
                   <button onClick={() => setEmailModal(true)} style={{ background: "#059669", color: "white" }}>
                     Enviar
                   </button>
+
                   <button
                     onClick={exportToExcel}
                     disabled={fullRows.length === 0}
@@ -537,6 +698,7 @@ export default function App() {
                   >
                     Exportar
                   </button>
+
                   <button
                     onClick={handleExportScheduleExcel}
                     style={{
@@ -551,6 +713,7 @@ export default function App() {
                   >
                     Planificador
                   </button>
+
                   <button
                     onClick={refresh}
                     disabled={loading}
@@ -562,7 +725,12 @@ export default function App() {
 
                 <div
                   className="category-tabs"
-                  style={{ display: "flex", gap: "6px", width: "100%", padding: "4px 0" }}
+                  style={{
+                    display: "flex",
+                    gap: "6px",
+                    width: "100%",
+                    padding: "4px 0",
+                  }}
                 >
                   {JOB_CATEGORIES.map((cat) => {
                     const isNok = cat.id === "nok"
@@ -610,10 +778,7 @@ export default function App() {
                 rows={filtered}
                 onEditComment={setEditingJobId}
                 onOpenExecutions={openExecutionsView}
-                onOpenLog={(jobName) => {
-                  const row = fullRows.find((r) => r.jobName === jobName)
-                  setLogModalData({ jobName, content: (row as any)?.as400LogContent ?? null })
-                }}
+                onOpenLog={openLogModal}
                 sortKey={sortKey}
                 sortDir={sortDir}
                 onSort={toggleSort}
@@ -642,10 +807,12 @@ export default function App() {
                 setSelectedJobName(j)
                 await loadExecutions(j)
               }}
-              onBack={() => {
-                setSelectedJobName(null)
-                setExecutionsData(null)
-              }}
+             onBack={async () => {
+  setSelectedJobName(null)
+  setExecutionsData(null)
+  setExecutionsError(null)
+  await reloadJobsDirectory()
+}}
               activeCategory={activeCategory}
             />
           )}
@@ -685,7 +852,11 @@ export default function App() {
         {versionModalOpen && <VersionModal onClose={() => setVersionModalOpen(false)} />}
 
         {logModalData && (
-          <div className="email-modal-overlay" onClick={() => setLogModalData(null)} style={{ zIndex: 9999 }}>
+          <div
+            className="email-modal-overlay"
+            onClick={() => setLogModalData(null)}
+            style={{ zIndex: 9999 }}
+          >
             <div
               className="email-modal-panel"
               style={{ maxWidth: 900 }}
@@ -693,10 +864,15 @@ export default function App() {
             >
               <div className="email-modal-header">
                 <h2>LOG AS/400 - {String(logModalData?.jobName || "Desconocido")}</h2>
-                <button className="email-modal-close" onClick={() => setLogModalData(null)}>
+
+                <button
+                  className="email-modal-close"
+                  onClick={() => setLogModalData(null)}
+                >
                   ×
                 </button>
               </div>
+
               <div style={{ padding: 16, overflowY: "auto", maxHeight: "65vh" }}>
                 <pre
                   style={{

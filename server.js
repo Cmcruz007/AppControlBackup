@@ -106,6 +106,123 @@ function setLastDailyReportDate(dateKey) {
   }
 }
 
+function safeString(value, fallback = '') {
+  if (value === null || value === undefined) return fallback
+  if (typeof value === 'string') return value
+  return String(value)
+}
+
+function normalizeStatus(value) {
+  return safeString(value).trim().toLowerCase()
+}
+
+function getPayloadSummary(payload) {
+  const rows = Array.isArray(payload?.fullRows) ? payload.fullRows : []
+
+  const summary = {
+    total: rows.length,
+    success: 0,
+    warning: 0,
+    failed: 0,
+    error: 0,
+    running: 0,
+    pending: 0,
+    other: 0,
+  }
+
+  for (const row of rows) {
+    const status = normalizeStatus(row?.status)
+
+    if (status === 'success') summary.success += 1
+    else if (status === 'warning' || status === 'warn') summary.warning += 1
+    else if (status === 'failed') summary.failed += 1
+    else if (status === 'error') summary.error += 1
+    else if (status === 'running') summary.running += 1
+    else if (status === 'pending') summary.pending += 1
+    else summary.other += 1
+  }
+
+  return summary
+}
+
+function sanitizeRowForFrontend(row) {
+  if (!row || typeof row !== 'object') return row
+
+  return {
+    ...row,
+    jobName: safeString(row.jobName || row.name || row.title || 'UNKNOWN', 'UNKNOWN'),
+    name: safeString(row.name || row.jobName || row.title || 'UNKNOWN', 'UNKNOWN'),
+    source: safeString(row.source),
+    status: safeString(row.status),
+    reason: safeString(row.reason),
+    type: safeString(row.type),
+  }
+}
+
+function decorateLogAvailability(row) {
+  if (!row || typeof row !== 'object') return row
+
+  const jobName = safeString(row.jobName || row.name || row.title).toLowerCase()
+  const source = safeString(row.source || row.type).toLowerCase()
+  const reason = safeString(row.reason).toLowerCase()
+
+  const hasEmailEvidence = Boolean(
+    row.lastEmailDate ||
+    row.emailReceivedDate ||
+    row.receivedDateTime ||
+    row.email?.receivedDateTime ||
+    row.email?.id ||
+    row.emailId ||
+    row.internetMessageId
+  )
+
+  const hasTextualEmailLog =
+    reason.includes('correo recibido') ||
+    reason.includes('revisar manualmente el log') ||
+    reason.includes('log')
+
+  const isKnownEmailJob =
+    source.includes('as400') ||
+    source.includes('vdc') ||
+    source.includes('barracuda') ||
+    source.includes('email') ||
+    jobName.includes('backup sd') ||
+    jobName.includes('backup sdb') ||
+    jobName.includes('sdb/tgt') ||
+    jobName.includes('backup sdb/tgt')
+
+  const hasLog = Boolean(
+    row.hasLog ||
+    row.logAvailable ||
+    row.hasEmailLog ||
+    row.emailLogAvailable ||
+    row.canOpenLog ||
+    row.log ||
+    row.logText ||
+    row.logHtml ||
+    row.emailLog ||
+    hasEmailEvidence ||
+    hasTextualEmailLog ||
+    isKnownEmailJob
+  )
+
+  if (!hasLog) return row
+
+  return {
+    ...row,
+
+    // Flags originales
+    hasLog: true,
+    logAvailable: true,
+
+    // Flags compatibles por si el frontend mira otros nombres
+    hasEmailLog: true,
+    emailLogAvailable: true,
+    canOpenLog: true,
+    logIcon: true,
+  }
+}
+
 // ─── Motor de refresco ──────────────────────────────────────────────────────
 
 async function buildRefreshPayloadForWindow(cfg, inicio, fin, includeSql = true) {
@@ -113,55 +230,50 @@ async function buildRefreshPayloadForWindow(cfg, inicio, fin, includeSql = true)
   const rawOverrides = cfg?.manualOverrides || {}
   const criticalityByJob = cfg?.criticalityByJob || {}
 
-  // ─── Helpers de ventana ───────────────────────────────────────────────────
+  function parseDateFlexible(value) {
+    if (!value) return null
 
- function parseDateFlexible(value) {
-  if (!value) return null
+    if (value instanceof Date) {
+      return Number.isNaN(value.getTime()) ? null : value
+    }
 
-  if (value instanceof Date) {
-    return Number.isNaN(value.getTime()) ? null : value
-  }
+    let d = new Date(value)
 
-  let d = new Date(value)
+    if (!Number.isNaN(d.getTime())) {
+      return d
+    }
 
-  if (!Number.isNaN(d.getTime())) {
-    return d
-  }
+    if (typeof value === 'string') {
+      const s = value.trim()
+      const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?$/)
 
-  // Soporte para timestamps locales tipo "26/06/2026 20:40:03"
-  if (typeof value === 'string') {
-    const s = value.trim()
+      if (m) {
+        const [, dd, mm, yyyy, hh, mi, ss] = m
 
-    const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?$/)
+        d = new Date(
+          Number(yyyy),
+          Number(mm) - 1,
+          Number(dd),
+          Number(hh),
+          Number(mi),
+          Number(ss || 0)
+        )
 
-    if (m) {
-      const [, dd, mm, yyyy, hh, mi, ss] = m
-
-      d = new Date(
-        Number(yyyy),
-        Number(mm) - 1,
-        Number(dd),
-        Number(hh),
-        Number(mi),
-        Number(ss || 0)
-      )
-
-      if (!Number.isNaN(d.getTime())) {
-        return d
+        if (!Number.isNaN(d.getTime())) {
+          return d
+        }
       }
     }
+
+    return null
   }
 
-  return null
-}
+  function isSameWindow(date) {
+    const d = parseDateFlexible(date)
+    if (!d) return false
 
-function isSameWindow(date) {
-  const d = parseDateFlexible(date)
-  if (!d) return false
-
-  return d >= inicio && d < fin
-}
-
+    return d >= inicio && d < fin
+  }
 
   function getOverrideDate(override) {
     if (!override || typeof override !== 'object') return null
@@ -185,8 +297,6 @@ function isSameWindow(date) {
     for (const [jobName, override] of Object.entries(overrides || {})) {
       const overrideDate = getOverrideDate(override)
 
-      // Si no tiene fecha en la ventana actual, no se reaplica.
-      // Esto evita arrastrar comentarios manuales antiguos.
       if (!isSameWindow(overrideDate)) continue
 
       filtered[jobName] = override
@@ -196,8 +306,6 @@ function isSameWindow(date) {
   }
 
   const overrides = filterManualOverridesForWindow(rawOverrides)
-
-  // ─── Datos ────────────────────────────────────────────────────────────────
 
   const [emails, sessions] = await Promise.all([
     cfg?.graph?.tenantId ? getEmailsInRange(cfg, inicio, fin) : Promise.resolve([]),
@@ -241,9 +349,9 @@ function isSameWindow(date) {
     )
   ).map(r => applyManualOverride(r, overrides, ahora))
 
-  // ─── Limpieza por ventana operacional ─────────────────────────────────────
-
   function cleanRow(row) {
+    row = sanitizeRowForFrontend(decorateLogAvailability(row))
+
     const evidenceDates = [
       row.lastRun,
       row.start,
@@ -256,10 +364,8 @@ function isSameWindow(date) {
 
     const hasEvidenceInWindow = evidenceDates.some(isSameWindow)
 
-    // NO usar row.nextRun aquí.
-    // nextRun es planificación, no evidencia real de ejecución.
     if (!hasEvidenceInWindow) {
-      return {
+      return sanitizeRowForFrontend(decorateLogAvailability({
         ...row,
         status: 'pending',
         reason: 'Pendiente ejecución',
@@ -269,44 +375,47 @@ function isSameWindow(date) {
         lastRun: null,
         lastResult: -1,
         endTimeDisplay: '',
-      }
+      }))
     }
 
-    return row
+    return sanitizeRowForFrontend(decorateLogAvailability(row))
   }
 
+  function applyManualOverrideFinal(row) {
+    row = sanitizeRowForFrontend(decorateLogAvailability(row))
 
-// ─── Prioridad final de ajustes manuales ──────────────────────────────────
-// REGLA FUNCIONAL:
-// El ajuste manual del operador prevalece SIEMPRE sobre cualquier carga
-// automática, mientras el override esté vigente dentro de la ventana.
-//
-// Esto se aplica al final de todo:
-// - después de SQL/Veeam
-// - después de VDC/Barracuda/AS400
-// - después de cleanRow
-// - después de cualquier estado/comentario automático
+    const ov = row?.jobName ? overrides?.[row.jobName] : null
+    if (!ov) return row
 
-function applyManualOverrideFinal(row) {
-  const ov = row?.jobName ? overrides?.[row.jobName] : null
-  if (!ov) return row
+    const manualStatus = ov.status ? safeString(ov.status).trim().toLowerCase() : ''
+    const manualComment = ov.comment ? safeString(ov.comment).trim() : ''
 
-  const manualStatus = ov.status ? String(ov.status).trim().toLowerCase() : ''
-  const manualComment = ov.comment ? String(ov.comment).trim() : ''
-
-  return {
-    ...row,
-    ...(manualStatus ? { status: manualStatus } : {}),
-    ...(manualComment ? { reason: manualComment } : {}),
+    return sanitizeRowForFrontend(decorateLogAvailability({
+      ...row,
+      ...(manualStatus ? { status: manualStatus } : {}),
+      ...(manualComment ? { reason: manualComment } : {}),
+    }))
   }
-}
 
+  const fullRows = [...sqlFullRows, ...vdcRows, ...barraRows, ...as400Rows]
+    .map(sanitizeRowForFrontend)
+    .map(decorateLogAvailability)
+    .map(cleanRow)
+    .map(applyManualOverrideFinal)
+    .map(sanitizeRowForFrontend)
+    .sort((a, b) => {
+      const aTime = new Date(a.nextRun || 0).getTime()
+      const bTime = new Date(b.nextRun || 0).getTime()
 
+      if (Number.isNaN(aTime) && Number.isNaN(bTime)) {
+        return safeString(a.jobName).localeCompare(safeString(b.jobName), 'es')
+      }
 
- const fullRows = [...sqlFullRows, ...vdcRows, ...barraRows, ...as400Rows]
-  .map(cleanRow)
-  .map(applyManualOverrideFinal)
-  .sort((a, b) => new Date(b.nextRun).getTime() - new Date(a.nextRun).getTime())
+      if (Number.isNaN(aTime)) return 1
+      if (Number.isNaN(bTime)) return -1
+
+      return bTime - aTime
+    })
 
   return {
     ok: true,
@@ -335,7 +444,6 @@ async function runRefresh() {
     lastPayload = payload
     lastRefreshTime = new Date().toISOString()
 
-    // Exportar JSON para app movil
     try {
       const jsonPath = process.env.BM_JSON_EXPORT_PATH || 'C:\\DashboardBackups\\backup_status.json'
       const folderPath = path.dirname(jsonPath)
@@ -368,7 +476,12 @@ async function runRefresh() {
       })
     }
 
-    console.log(`[REFRESH] OK — ${payload.fullRows.length} jobs, ${new Date().toLocaleTimeString()}`)
+    const summary = getPayloadSummary(payload)
+
+    console.log(
+      `[REFRESH] OK — total=${summary.total}, ok=${summary.success}, avisos=${summary.warning}, errores=${summary.failed + summary.error}, running=${summary.running}, pending=${summary.pending}, ${new Date().toLocaleTimeString()}`
+    )
+
     return payload
   } catch (e) {
     logGraphError('RUN_REFRESH_ERROR', {
@@ -396,24 +509,51 @@ async function sendDailyReport() {
     console.log('[S-1] Generando informe diario...')
     console.log('[S-1] ENV BM_DAILY_REPORT_TO:', JSON.stringify(process.env.BM_DAILY_REPORT_TO))
 
-    if (!lastPayload || !Array.isArray(lastPayload.fullRows)) {
-      console.log('[S-1] No hay datos disponibles todavía. Ejecutando refresh previo...')
+    const cfg = loadConfig()
+    const hasSql = !!cfg?.sql
+    const hasGraph = !!cfg?.graph?.tenantId
 
-      const payload = await runRefresh()
-
-      if (!payload?.ok || !Array.isArray(payload.fullRows)) {
-        console.log('[S-1] No se pudo generar informe: no hay payload válido')
-        return false
-      }
+    if (!hasSql && !hasGraph) {
+      console.log('[S-1] No se pudo generar informe: falta configuracion SQL o Graph')
+      return false
     }
 
-    const cfg = loadConfig()
+    /*
+      FIX CRITICO S-1:
+      El correo diario NO debe usar un lastPayload antiguo o desacoplado.
+      Antes de construir el HTML se fuerza un refresh real.
+      Ese refresh actualiza lastPayload.
+      Por tanto:
+        - /api/status
+        - la UI al abrir https://dashboard
+        - el HTML enviado por correo
+      quedan basados en el mismo snapshot.
+    */
+    console.log('[S-1] Forzando refresh previo al envio para sincronizar correo y dashboard...')
+
+    const freshPayload = await runRefresh()
+
+    if (!freshPayload?.ok || !Array.isArray(freshPayload.fullRows)) {
+      console.log('[S-1] No se pudo generar informe: refresh previo no devolvio payload valido')
+      return false
+    }
+
     const data = lastPayload
 
     if (!data || !Array.isArray(data.fullRows)) {
-      console.log('[S-1] Payload no válido después del refresh')
+      console.log('[S-1] Payload no valido despues del refresh previo')
       return false
     }
+
+    const summary = getPayloadSummary(data)
+
+    console.log('[S-1] Snapshot usado para email:')
+    console.log('[S-1]   windowStart:', data.windowStart)
+    console.log('[S-1]   windowEnd  :', data.windowEnd)
+    console.log('[S-1]   ts         :', data.ts)
+    console.log(
+      `[S-1]   resumen    : total=${summary.total}, ok=${summary.success}, avisos=${summary.warning}, errores=${summary.failed + summary.error}, running=${summary.running}, pending=${summary.pending}, other=${summary.other}`
+    )
 
     const fromEnv = (process.env.BM_DAILY_REPORT_TO || '').trim()
     const fromCfg = cfg?.dailyReport?.recipients
@@ -503,7 +643,6 @@ function startDailyReportScheduler() {
 const app = express()
 app.use(express.json({ limit: '2mb' }))
 
-// Servir React SPA desde dist/
 const distPath = path.join(__dirname, 'dist')
 
 if (fs.existsSync(distPath)) {
@@ -959,6 +1098,9 @@ app.get('/api/health', (_req, res) => {
     totalJobs: lastPayload?.fullRows?.length ?? 0,
     mode: isElectron ? 'electron' : 'express',
     dailyReportLastSent: getLastDailyReportDate(),
+    summary: getPayloadSummary(lastPayload),
+    windowStart: lastPayload?.windowStart || null,
+    windowEnd: lastPayload?.windowEnd || null,
   })
 })
 
