@@ -9,6 +9,7 @@ const https = require('https')
 const http = require('http')
 
 const { logGraphError } = require('./electron/modules/utils.cjs')
+const { verifyEntraToken } = require('./electron/modules/entraAuth.cjs')
 const { loadConfig, saveConfig, isElectron } = require('./electron/modules/config.cjs')
 const {
   closeCachedSqlPool,
@@ -588,22 +589,39 @@ if (fs.existsSync(distPath)) {
 
 // ─── Middleware de autenticación ────────────────────────────────────────────
 
-function authMiddleware(req, res, next) {
-  if (!AUTH_TOKEN) return next()
-
+async function authMiddleware(req, res, next) {
   if (!req.path.startsWith('/api/')) return next()
 
   const header = req.headers.authorization || ''
-  const token = header.startsWith('Bearer ')
-    ? header.slice(7)
-    : req.query?.token || ''
+  const bearerToken = header.startsWith('Bearer ')
+    ? header.slice(7).trim()
+    : ''
 
-  if (token === AUTH_TOKEN) return next()
+  const queryToken = req.query?.token || ''
 
-  return res.status(401).json({ ok: false, error: 'No autorizado' })
+  // 1) Fallback actual: BM_AUTH_TOKEN.
+  // Se mantiene para no romper producción mientras preparamos Entra ID.
+  if (AUTH_TOKEN && (bearerToken === AUTH_TOKEN || queryToken === AUTH_TOKEN)) {
+    return next()
+  }
+
+  // 2) Futuro: Microsoft Entra ID.
+  // Esto funcionará cuando el frontend mande un access_token válido.
+  try {
+    if (bearerToken) {
+      const decoded = await verifyEntraToken(bearerToken)
+      req.entraUser = decoded
+      return next()
+    }
+  } catch {
+    // Si no valida como Entra, cae al 401.
+  }
+
+  return res.status(401).json({
+    ok: false,
+    error: 'No autorizado',
+  })
 }
-
-app.use(authMiddleware)
 
 // ─── API Endpoints ──────────────────────────────────────────────────────────
 
