@@ -1,5 +1,27 @@
 # Changelog
 
+## v4.0.0 - 2026-06-28
+
+### Cerrado
+- S-1 cerrado definitivamente: envío automático diario de informe a las 17:00 validado en producción.
+- El correo automático usa el mismo snapshot que el dashboard, forzando refresh previo antes de generar el informe.
+- KPIs del correo alineados con los KPIs visibles en `https://dashboard`.
+- Asunto y título del informe basados en el día de inicio de la ventana operacional.
+- Ventana operacional validada: 18:00 del día N a 17:59 del día N+1.
+- Banner del informe ajustado a la regla funcional definitiva:
+  - `success`, `running` y `pending` se consideran backups correctos del día.
+  - `warning`, `error` y `failed` generan banner de errores.
+- Confirmado en producción: mail automático recibido a las 17:00 con 6 jobs en ejecución, banner verde correcto, asunto/título correctos y KPIs coherentes con dashboard.
+
+### Mejoras
+- Mejora de trazabilidad en logs del envío diario.
+- Refuerzo de consistencia entre backend, dashboard y correo.
+- Preparación mantenida para autenticación Entra ID sin activar aún el login productivo por Entra.
+
+### Notas
+- `logs/` queda como carpeta runtime local y no debe subirse al repositorio.
+
+
 ## [3.2] - 2026-06-26
 
 ### ✨ Añadido
@@ -43,6 +65,7 @@
 - No se modifica el frontend (ya guardaba `timestamp` al editar comentario).
 - Cambios localizados en `electron/modules/config.cjs`.
 
+
 ## [3.0] - 2026-06-25
 
 ### 🚀 Versión mayor
@@ -74,6 +97,7 @@
 - La evidencia real de ejecución se basa en `lastRun`, `start`, `end`, `lastEmailDate`, `emailReceivedDate` o `receivedDateTime`.
 - Validado en DASHBOARD con `POST /api/refresh`.
 
+
 ## [2.3] - 2026-06-24
 
 ### ✨ Mejorado
@@ -93,6 +117,7 @@
 ### 🔧 Interno
 - ✅ Builder HTML actualizado en ambos archivos (`.cjs` backend + `.ts` frontend)
 - ✅ Coherencia visual entre botón Enviar y envío automático S-1
+
 
 ## [2.2] - 2026-06-24
 
@@ -116,7 +141,9 @@
 - ✅ Nueva función `detectRuleSource(rule)` para tipar la regla (AS400/Barracuda/VDC)
 - ✅ Parsers exportados desde `graph.cjs` para testing futuro
 - ✅ Cada execution incluye `parserSource` y `parsed` (true/false) para diagnóstico
----
+
+
+
 ## [2.1] - 2026-06-23
 
 ### ✨ Añadido
@@ -180,7 +207,7 @@
 - ✅ Sistema de refresco y cache estabilizado
 - ✅ Logs y diagnóstico mejorados
 
----
+
 
 ## [1.0.2] - 2026-06-20
 
@@ -193,14 +220,14 @@
 - 🐛 Duplicado de jobs: se mostraba el job padre junto al Backup Copy hijo (B-4)
 - 📉 KPI "En curso" y "Éxitos" inconsistentes debido a clasificación incorrecta
 
----
+
 
 ## [1.0.1] - 2026-06-18
 
 ### Corregido
 - 🐛 Botón "Planificador" daba error en modo web (scheduleExcel.ts llamaba directamente a window.api)
 
----
+
 
 ## [1.0.0] - 2026-06-18
 
