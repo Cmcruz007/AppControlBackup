@@ -48,3 +48,7 @@ LICENSES.chromium.html
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+# Runtime local BackupMonitor
+logs/
+daily-report-last-sent.txt
