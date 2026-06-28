@@ -1,6 +1,25 @@
 // electron/modules/graph.cjs
 const { logGraphError } = require('./utils.cjs')
 
+// ─── Limpieza de logs email ─────────────────────────────────────────────────
+
+function cleanBarracudaFooter(content) {
+  if (!content) return content
+
+  return String(content)
+    .replace(/You can contact Barracuda Networks[\s\S]*$/i, '')
+    .trim()
+}
+
+function cleanVdcFooter(content) {
+  if (!content) return content
+
+  return String(content)
+    .replace(/Please view your backup logs for further details:\s*(<br\s*\/?>|\r?\n|\s)*View logs\s*(<br\s*\/?>|\r?\n|\s)*N?\s*$/i, '')
+    .replace(/Please view your backup logs for further details:[\s\S]*$/i, '')
+    .trim()
+}
+
 // ─── Token OAuth ────────────────────────────────────────────────────────────
 
 async function getGraphToken(graphCfg) {
@@ -11,16 +30,20 @@ async function getGraphToken(graphCfg) {
     scope: 'https://graph.microsoft.com/.default',
     grant_type: 'client_credentials',
   })
+
   const resAuth = await fetch(authUrl, { method: 'POST', body })
   const authJson = await resAuth.json()
+
   if (!resAuth.ok) {
     logGraphError('GRAPH_TOKEN_HTTP_ERROR', { status: resAuth.status, body: authJson })
     throw new Error(`Graph OAuth HTTP ${resAuth.status}: ${JSON.stringify(authJson)}`)
   }
+
   if (!authJson.access_token) {
     logGraphError('GRAPH_TOKEN_MISSING', { body: authJson })
     throw new Error(`No se pudo obtener token OAuth: ${JSON.stringify(authJson)}`)
   }
+
   return authJson.access_token
 }
 
@@ -28,33 +51,49 @@ async function getGraphToken(graphCfg) {
 
 async function getEmailsInRange(cfg, inicio, fin) {
   if (!cfg?.graph?.tenantId) throw new Error('Falta configuracion de Microsoft Graph (tenantId).')
+
   const g = cfg.graph
   const token = await getGraphToken(g)
+
   const filter = `receivedDateTime ge ${inicio.toISOString()} and receivedDateTime lt ${fin.toISOString()}`
+
   const params = new URLSearchParams({
     $filter: filter,
     $select: 'id,subject,receivedDateTime,bodyPreview,sender,from,hasAttachments',
     $top: '200',
     $orderby: 'receivedDateTime desc',
   })
+
   let nextUrl = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(g.mailbox)}/messages?${params.toString()}`
   const all = []
+
   while (nextUrl) {
     const resMail = await fetch(nextUrl, {
-      headers: { Authorization: `Bearer ${token}`, Prefer: 'outlook.body-content-type="text"' },
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Prefer: 'outlook.body-content-type="text"',
+      },
     })
+
     const mailData = await resMail.json()
+
     if (!resMail.ok) {
       logGraphError('GRAPH_LIST_MESSAGES_HTTP_ERROR', {
-        status: resMail.status, mailbox: g.mailbox, body: mailData,
-        inicio: inicio.toISOString(), fin: fin.toISOString(),
+        status: resMail.status,
+        mailbox: g.mailbox,
+        body: mailData,
+        inicio: inicio.toISOString(),
+        fin: fin.toISOString(),
       })
       throw new Error(`Graph list messages HTTP ${resMail.status}: ${JSON.stringify(mailData)}`)
     }
+
     all.push(...(mailData.value || []))
     nextUrl = mailData['@odata.nextLink'] || null
+
     if (all.length >= 2000) break
   }
+
   return all
 }
 
@@ -62,6 +101,7 @@ async function getEmails(cfg) {
   const hours = Math.max(1, Number(cfg?.graph?.sinceHours) || 24)
   const fin = new Date()
   const inicio = new Date(fin.getTime() - hours * 60 * 60 * 1000)
+
   return getEmailsInRange(cfg, inicio, fin)
 }
 
@@ -69,19 +109,24 @@ async function getEmails(cfg) {
 
 async function getMessageBody(cfg, messageId) {
   if (!cfg?.graph?.tenantId || !messageId) return null
+
   try {
     const token = await getGraphToken(cfg.graph)
+
     const url = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(cfg.graph.mailbox)}/messages/${encodeURIComponent(messageId)}?$select=body,bodyPreview`
+
     const res = await fetch(url, {
       headers: {
         Authorization: `Bearer ${token}`,
         Prefer: 'outlook.body-content-type="text"',
       },
     })
+
     if (!res.ok) {
       logGraphError('GET_MESSAGE_BODY_ERROR', { status: res.status, messageId })
       return null
     }
+
     const data = await res.json()
     return data?.body?.content || data?.bodyPreview || null
   } catch (e) {
@@ -94,24 +139,34 @@ async function getMessageBody(cfg, messageId) {
 
 async function fetchAs400Attachment(cfg, messageId) {
   if (!cfg?.graph?.tenantId || !messageId) return null
+
   try {
     const token = await getGraphToken(cfg.graph)
+
     const url = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(cfg.graph.mailbox)}/messages/${encodeURIComponent(messageId)}/attachments`
-    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
+
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+
     if (!res.ok) {
       logGraphError('AS400_ATTACHMENT_ERROR', { status: res.status, messageId })
       return null
     }
+
     const data = await res.json()
     const attachments = data.value || []
+
     const file = attachments.find((a) => a.contentType && a.contentType.includes('text'))
       || attachments.find((a) => a.contentBytes)
+
     if (file && file.contentBytes) {
       return Buffer.from(file.contentBytes, 'base64').toString('latin1')
     }
   } catch (e) {
     logGraphError('AS400_ATTACHMENT_EXCEPTION', { message: e?.message, messageId })
   }
+
   return null
 }
 
@@ -120,18 +175,30 @@ async function fetchAs400Attachment(cfg, messageId) {
 async function sendGraphEmail(cfg, { to, cc, bcc, subject, bodyHtml }) {
   const g = cfg?.graph
   if (!g?.tenantId) throw new Error('Falta configuracion de Microsoft Graph.')
+
   const parseRecipients = (value) => {
     if (Array.isArray(value)) return value.map((x) => String(x).trim()).filter(Boolean)
     return String(value || '').split(';').map((x) => x.trim()).filter(Boolean)
   }
-  const toList = parseRecipients(to), ccList = parseRecipients(cc), bccList = parseRecipients(bcc)
+
+  const toList = parseRecipients(to)
+  const ccList = parseRecipients(cc)
+  const bccList = parseRecipients(bcc)
+
   if (!toList.length) throw new Error('No hay destinatarios validos en "Para".')
+
   const mapR = (list) => list.map((address) => ({ emailAddress: { address } }))
+
   const accessToken = await getGraphToken(g)
+
   const sendUrl = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(g.mailbox)}/sendMail`
+
   const res = await fetch(sendUrl, {
     method: 'POST',
-    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
     body: JSON.stringify({
       message: {
         subject,
@@ -142,11 +209,17 @@ async function sendGraphEmail(cfg, { to, cc, bcc, subject, bodyHtml }) {
       },
     }),
   })
+
   if (!res.ok) {
     const errBody = await res.text()
-    logGraphError('GRAPH_SENDMAIL_HTTP_ERROR', { status: res.status, mailbox: g.mailbox, body: errBody })
+    logGraphError('GRAPH_SENDMAIL_HTTP_ERROR', {
+      status: res.status,
+      mailbox: g.mailbox,
+      body: errBody,
+    })
     throw new Error(`Graph sendMail HTTP ${res.status}: ${errBody}`)
   }
+
   return true
 }
 
@@ -156,19 +229,16 @@ function detectRuleSource(rule) {
   const id = String(rule?.id || '').toLowerCase()
   const title = String(rule?.title || '').toLowerCase()
   const sender = String(rule?.sender || '').toLowerCase()
+
   if (id.startsWith('as400') || sender.includes('qsysopr')) return 'as400'
   if (id.startsWith('barra') || sender.includes('barracuda')) return 'barracuda'
   if (id.startsWith('vdc') || sender.includes('veeam')) return 'vdc'
   if (title.includes('barracuda')) return 'barracuda'
   if (title.includes('veeam data cloud') || title.includes('vdc')) return 'vdc'
+
   return 'unknown'
 }
 
-/**
- * AS400 — parsea adjunto .txt:
- *   "Trabajo X arrancado el YY/MM/DD a las HH:MM:SS"
- *   "Trabajo X finalizado el YY/MM/DD a las HH:MM:SS; se utilizaron N,NNN segundos; código de finalización N"
- */
 /**
  * AS400 — parsea adjunto .txt:
  *   "Trabajo X arrancado el YY/MM/DD a las HH:MM:SS"
@@ -186,16 +256,43 @@ function parseAs400Attachment(text) {
   const parseDate = (yy, mm, dd, hh, mi, ss) => {
     const y = parseInt(yy, 10)
     const year = y < 90 ? 2000 + y : 1900 + y
-    return new Date(year, parseInt(mm, 10) - 1, parseInt(dd, 10), parseInt(hh, 10), parseInt(mi, 10), parseInt(ss, 10))
+
+    return new Date(
+      year,
+      parseInt(mm, 10) - 1,
+      parseInt(dd, 10),
+      parseInt(hh, 10),
+      parseInt(mi, 10),
+      parseInt(ss, 10),
+    )
   }
 
-  let startTime = null, endTime = null, durationMs = null, status = null, code = null
+  let startTime = null
+  let endTime = null
+  let durationMs = null
+  let status = null
+  let code = null
 
   if (startMatch) {
-    startTime = parseDate(startMatch[1], startMatch[2], startMatch[3], startMatch[4], startMatch[5], startMatch[6])
+    startTime = parseDate(
+      startMatch[1],
+      startMatch[2],
+      startMatch[3],
+      startMatch[4],
+      startMatch[5],
+      startMatch[6],
+    )
   }
+
   if (endMatch) {
-    endTime = parseDate(endMatch[1], endMatch[2], endMatch[3], endMatch[4], endMatch[5], endMatch[6])
+    endTime = parseDate(
+      endMatch[1],
+      endMatch[2],
+      endMatch[3],
+      endMatch[4],
+      endMatch[5],
+      endMatch[6],
+    )
     code = parseInt(endMatch[7], 10)
     status = code === 0 ? 'success' : 'failed'
   }
@@ -242,7 +339,10 @@ function parseBarracudaBody(body) {
   const sizeMatch = clean.match(/Size\s+([\d.]+)\s*(KiB|MiB|GiB|TiB)/i)
   const itemMatch = clean.match(/Item\s+Count\s+([\d,]+)/i)
 
-  let startTime = null, endTime = null, durationMs = null, status = null
+  let startTime = null
+  let endTime = null
+  let durationMs = null
+  let status = null
 
   if (startMatch) startTime = new Date(`${startMatch[1]}T${startMatch[2]}Z`)
   if (endMatch) endTime = new Date(`${endMatch[1]}T${endMatch[2]}Z`)
@@ -264,6 +364,7 @@ function parseBarracudaBody(body) {
   } else {
     const errors = errorMatch ? parseInt(errorMatch[1], 10) : 0
     const warnings = warningMatch ? parseInt(warningMatch[1], 10) : 0
+
     if (errors > 0) status = 'failed'
     else if (warnings > 0) status = 'warning'
     else status = 'success'
@@ -288,7 +389,9 @@ function parseBarracudaBody(body) {
  */
 function parseVdcBody(message) {
   const text = `${message?.subject || ''} ${message?.bodyPreview || ''}`.toLowerCase()
+
   let status = 'success'
+
   if (text.includes('failed') || text.includes('error')) status = 'failed'
   else if (text.includes('warning')) status = 'warning'
   else if (text.includes('successfully')) status = 'success'
@@ -315,12 +418,15 @@ function inferExecutionStatusFromRule(message, rule) {
   if (errorWord && haystack.includes(errorWord)) {
     return { status: 'failed', reason: 'Correo recibido (error detectado)' }
   }
+
   if (successWord && haystack.includes(successWord)) {
     return { status: 'success', reason: 'Correo recibido (éxito detectado)' }
   }
+
   if (String(rule?.id || '').toLowerCase().startsWith('as400') || message?.hasAttachments) {
     return { status: 'success', reason: 'Correo recibido' }
   }
+
   return { status: 'pending', reason: 'Correo recibido' }
 }
 
@@ -401,9 +507,15 @@ async function getJobExecutionsFromEmailHistory(cfg, rule, jobName, limit = 200,
           parsed = parseAs400Attachment(as400LogContent)
         } else if (ruleSource === 'barracuda') {
           bodyContent = await getMessageBody(cfg, m.id)
+          bodyContent = cleanBarracudaFooter(bodyContent)
+
           logContent = bodyContent
           parsed = parseBarracudaBody(bodyContent)
         } else if (ruleSource === 'vdc') {
+          bodyContent = await getMessageBody(cfg, m.id)
+          bodyContent = cleanVdcFooter(bodyContent)
+
+          logContent = bodyContent
           parsed = parseVdcBody(m)
         } else if (m?.hasAttachments) {
           // Fallback: si tiene adjunto pero la regla no se detecta como AS400,
@@ -491,9 +603,14 @@ module.exports = {
   fetchAs400Attachment,
   sendGraphEmail,
   getJobExecutionsFromEmailHistory,
+
   // Parsers exportados por si quieres testearlos
   parseAs400Attachment,
   parseBarracudaBody,
   parseVdcBody,
   detectRuleSource,
+
+  // Limpieza logs
+  cleanBarracudaFooter,
+  cleanVdcFooter,
 }

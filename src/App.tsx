@@ -46,6 +46,17 @@ async function handleExportScheduleExcel() {
   }
 }
 
+function getAs400LogColor(jobName?: string) {
+  const name = String(jobName || "").toLowerCase()
+
+  if (name.includes("backup sd") && !name.includes("sdb")) return "#00FF00"
+  if (name.includes("backup pr")) return "#F01818"
+  if (name.includes("backup rr")) return "#A0A000"
+  if (name.includes("sdb") || name.includes("tgt")) return "#7890F0"
+
+  return "#E5E7EB"
+}
+
 export default function App() {
   const [tab, setTab] = useState<Tab>("dashboard")
   const [activeCategory, setActiveCategory] = useState<CategoryFilter>("all")
@@ -75,6 +86,10 @@ export default function App() {
   const [executionsError, setExecutionsError] = useState<string | null>(null)
   const [authGateOpen, setAuthGateOpen] = useState(false)
 
+  const [dbJobs, setDbJobs] = useState<string[]>([])
+  const [logModalData, setLogModalData] = useState<{ jobName: string; content: string | null } | null>(null)
+  const [versionModalOpen, setVersionModalOpen] = useState(false)
+
   useEffect(() => {
     function handleUnauthorized() {
       setAuthGateOpen(true)
@@ -93,10 +108,6 @@ export default function App() {
       window.removeEventListener("bm:unauthorized", handleUnauthorized)
     }
   }, [])
-
-  const [dbJobs, setDbJobs] = useState<string[]>([])
-  const [logModalData, setLogModalData] = useState<{ jobName: string; content: string | null } | null>(null)
-  const [versionModalOpen, setVersionModalOpen] = useState(false)
 
   const refresh = useCallback(async () => {
     setLoading(true)
@@ -400,46 +411,7 @@ export default function App() {
     await handleManualOverrideSaved(nextCfg)
   }
 
-async function reloadJobsDirectory() {
-    try {
-      const res = await api().listJobs()
-
-      if (res?.ok && Array.isArray(res.jobs)) {
-        setDbJobs(
-          res.jobs
-            .map((x: any) => {
-              if (typeof x === "string") return x
-              return x?.jobName || x?.name || x?.title || ""
-            })
-            .filter(Boolean)
-        )
-      }
-    } catch {
-      // si falla listJobs, seguimos con refresh
-    }
-
-    try {
-      const p = ((await api().refresh()) as RefreshPayload | null) ?? null
-
-      if ((p as any)?.ok) {
-        setRows(((p as any).rows ?? []) as JobRowUi[])
-        setFullRows(((p as any).fullRows ?? []) as JobRowUi[])
-        setLastRun((p as any).ts ?? null)
-
-        if ((p as any).windowStart) {
-          setWindowStart((p as any).windowStart)
-        }
-
-        if ((p as any).windowEnd) {
-          setWindowEnd((p as any).windowEnd)
-        }
-      }
-    } catch {
-      // evitamos romper la navegación si el refresh falla puntualmente
-    }
-  }
-
-async function reloadJobsDirectory() {
+  async function reloadJobsDirectory() {
     try {
       const res = await api().listJobs()
 
@@ -478,7 +450,6 @@ async function reloadJobsDirectory() {
     }
   }
 
-
   async function loadExecutions(jobName: string | null) {
     setExecutionsError(null)
     setExecutionsLoading(true)
@@ -496,7 +467,7 @@ async function reloadJobsDirectory() {
     }
   }
 
- async function openExecutionsView(jobName?: any) {
+  async function openExecutionsView(jobName?: any) {
     const targetJob = typeof jobName === "string" && jobName.trim() ? jobName.trim() : null
 
     setTab("executions")
@@ -511,12 +482,11 @@ async function reloadJobsDirectory() {
     }
   }
 
-useEffect(() => {
+  useEffect(() => {
     if (tab === "executions" && !selectedJobName && allJobNames.length === 0) {
       reloadJobsDirectory()
     }
   }, [tab, selectedJobName, allJobNames.length])
-
 
   async function openLogModal(jobName: string) {
     setLogModalData({
@@ -807,12 +777,12 @@ useEffect(() => {
                 setSelectedJobName(j)
                 await loadExecutions(j)
               }}
-             onBack={async () => {
-  setSelectedJobName(null)
-  setExecutionsData(null)
-  setExecutionsError(null)
-  await reloadJobsDirectory()
-}}
+              onBack={async () => {
+                setSelectedJobName(null)
+                setExecutionsData(null)
+                setExecutionsError(null)
+                await reloadJobsDirectory()
+              }}
               activeCategory={activeCategory}
             />
           )}
@@ -863,7 +833,7 @@ useEffect(() => {
               onClick={(e) => e.stopPropagation()}
             >
               <div className="email-modal-header">
-                <h2>LOG AS/400 - {String(logModalData?.jobName || "Desconocido")}</h2>
+                <h2>LOG BACKUP - {String(logModalData?.jobName || "Desconocido")}</h2>
 
                 <button
                   className="email-modal-close"
@@ -876,14 +846,17 @@ useEffect(() => {
               <div style={{ padding: 16, overflowY: "auto", maxHeight: "65vh" }}>
                 <pre
                   style={{
-                    background: "#000",
-                    color: "#0f0",
+                    margin: 0,
+                    color: getAs400LogColor(logModalData?.jobName),
+                    background: "#020617",
+                    border: "1px solid rgba(148, 163, 184, 0.25)",
+                    borderRadius: 10,
                     padding: 16,
-                    borderRadius: 6,
-                    fontFamily: "monospace",
-                    fontSize: 13,
                     whiteSpace: "pre-wrap",
-                    wordBreak: "break-all",
+                    wordBreak: "break-word",
+                    fontFamily: "Consolas, 'Courier New', monospace",
+                    fontSize: 13,
+                    lineHeight: 1.45,
                   }}
                 >
                   {logModalData?.content
