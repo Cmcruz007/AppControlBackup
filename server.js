@@ -410,7 +410,50 @@ async function buildRefreshPayloadForWindow(cfg, inicio, fin, includeSql = true)
       ...(manualComment ? { reason: manualComment } : {}),
     }))
   }
+  // Catalogo fijo AS400/email:
+  // Los jobs definidos en cfg.as400Rules deben existir siempre en Directorio de Jobs.
+  // No se inyectan como SQL porque su historico depende de reglas AS400/email.
+  const existingAs400JobNames = new Set(
+    (Array.isArray(as400Rows) ? as400Rows : []).map(function (r) {
+      return safeString(r && (r.jobName || r.name || r.title)).toUpperCase().trim()
+    })
+  )
 
+  function ensureAs400CatalogFromRules() {
+    const rules = Array.isArray(cfg && cfg.as400Rules) ? cfg.as400Rules : []
+
+    rules.forEach(function (rule) {
+      const jobName = safeString(rule && (rule.title || rule.name)).trim()
+      const key = jobName.toUpperCase()
+
+      if (!key || existingAs400JobNames.has(key)) return
+
+      as400Rows.push({
+        jobName: jobName,
+        name: jobName,
+        source: 'as400',
+        type: 'as400',
+        status: 'pending',
+        reason: 'Pendiente recepción',
+        duration: '',
+        durationMs: null,
+        durationTrend: null,
+        lastRun: null,
+        lastResult: -1,
+        endTimeDisplay: '',
+        hasLog: true,
+        logAvailable: true,
+        hasEmailLog: true,
+        emailLogAvailable: true,
+        canOpenLog: true,
+        logIcon: true,
+      })
+
+      existingAs400JobNames.add(key)
+    })
+  }
+
+  ensureAs400CatalogFromRules()
   const fullRows = [...sqlFullRows, ...vdcRows, ...barraRows, ...as400Rows]
     .map(sanitizeRowForFrontend)
     .map(decorateLogAvailability)
