@@ -2,8 +2,62 @@ import type { JobRow } from "../types/ui"
 import type { SortKey, SortDir } from "../types/ui"
 import { SourceIcon } from "./Icons"
 
+function getDisplayState(row: any): string {
+  const raw = String(row?.globalState || row?.status || row?.state || "").trim().toUpperCase()
+
+  if (raw === "WARN") return "WARNING"
+  if (raw === "FAILED" || raw === "FAILURE") return "ERROR"
+  if (raw === "NO_RUN" || raw === "NORUN") return "NO-RUN"
+
+  // B-2: pending técnico se muestra como EN CURSO.
+  if (raw === "PENDING") return "RUNNING"
+
+  return raw
+}
+
+function getVisibleStatus(row: any): string {
+  const state = getDisplayState(row)
+
+  if (state === "SUCCESS") return "SUCCESS"
+  if (state === "WARNING") return "WARNING"
+  if (state === "ERROR") return "ERROR"
+
+  // B-2
+  if (state === "RUNNING") return "EN CURSO"
+
+  if (state === "NO-RUN") return "SIN EJECUCIÓN"
+
+  return state || "-"
+}
+
+function getStatusClass(row: any): string {
+  const state = getDisplayState(row)
+
+  if (state === "SUCCESS") return "success"
+  if (state === "WARNING") return "warning"
+  if (state === "ERROR") return "failed"
+
+  // Mantenemos clase running para aprovechar estilos existentes.
+  if (state === "RUNNING") return "running"
+
+  if (state === "NO-RUN") return "no-run"
+
+  return "unknown"
+}
+
+function getVisibleDetail(row: any): string {
+  return String(row?.detail || row?.reason || "")
+}
+
 export default function JobTable({
-  rows, onEditComment, onOpenExecutions, onOpenLog, sortKey, sortDir, onSort, readOnly,
+  rows,
+  onEditComment,
+  onOpenExecutions,
+  onOpenLog,
+  sortKey,
+  sortDir,
+  onSort,
+  readOnly,
 }: {
   rows: JobRow[]
   onEditComment?: (id: string) => void
@@ -17,7 +71,7 @@ export default function JobTable({
   const canShowBackupLogIcon = (r: any) => {
     const jobName = String(r?.jobName ?? r?.name ?? "").toLowerCase()
     const source = String(r?.source ?? r?.type ?? "").toLowerCase()
-    const reason = String(r?.reason ?? "").toLowerCase()
+    const reason = String(r?.reason ?? r?.detail ?? "").toLowerCase()
 
     return Boolean(
       onOpenLog &&
@@ -49,28 +103,35 @@ export default function JobTable({
           <th className="sortable" onClick={() => onSort("jobName")}>
             Job {sortKey === "jobName" ? (sortDir === "asc" ? "▲" : "▼") : ""}
           </th>
+
           <th className="sortable" onClick={() => onSort("status")}>
             Estado {sortKey === "status" ? (sortDir === "asc" ? "▲" : "▼") : ""}
           </th>
+
           <th className="sortable" onClick={() => onSort("source")}>
             Fuente {sortKey === "source" ? (sortDir === "asc" ? "▲" : "▼") : ""}
           </th>
+
           <th className="sortable" onClick={() => onSort("nextRun")}>
             Inicio {sortKey === "nextRun" ? (sortDir === "asc" ? "▲" : "▼") : ""}
           </th>
+
           <th>Duración</th>
+
           <th className="sortable" onClick={() => onSort("reason")}>
             Detalle {sortKey === "reason" ? (sortDir === "asc" ? "▲" : "▼") : ""}
           </th>
+
           {!readOnly && <th>Acción</th>}
         </tr>
       </thead>
 
       <tbody>
         {rows.map((r) => {
-          const displayStatus = r.status
-          const displayReason = r.reason ?? ""
-          const rowClass = `compact-row row-${displayStatus}`
+          const displayStatus = getVisibleStatus(r)
+          const statusClass = getStatusClass(r)
+          const displayReason = getVisibleDetail(r)
+          const rowClass = `compact-row row-${statusClass}`
 
           return (
             <tr key={r.jobId} className={rowClass}>
@@ -141,18 +202,8 @@ export default function JobTable({
               </td>
 
               <td>
-                <span className={`badge ${displayStatus}`}>
-                  {displayStatus === "success"
-                    ? "SUCCESS"
-                    : displayStatus === "warning"
-                      ? "WARNING"
-                      : displayStatus === "failed"
-                        ? "ERROR"
-                        : displayStatus === "running"
-                          ? "RUNNING"
-                          : displayStatus === "pending"
-                            ? "PENDING"
-                            : String(displayStatus).toUpperCase()}
+                <span className={`badge ${statusClass}`}>
+                  {displayStatus}
                 </span>
               </td>
 

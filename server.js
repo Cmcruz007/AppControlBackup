@@ -116,6 +116,72 @@ function normalizeStatus(value) {
   return safeString(value).trim().toLowerCase()
 }
 
+function normalizeJobNameForRule(value) {
+  return safeString(value)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toUpperCase()
+}
+
+function isWeekendOperationalWindow(windowStartDate) {
+  const d = windowStartDate instanceof Date ? windowStartDate : new Date(windowStartDate)
+  if (Number.isNaN(d.getTime())) return false
+
+  const day = d.getDay()
+  return day === 0 || day === 6
+}
+
+function isAs400PrRrWeekendExcluded(row) {
+  const name = normalizeJobNameForRule(row?.jobName || row?.name || row?.title)
+
+  return (
+    name === 'BACKUP PR' ||
+    name === 'BACKUP RR'
+  )
+}
+
+function isDdvePhysicalChildDuplicate(row) {
+  const rawName = safeString(row?.jobName || row?.name || row?.title).trim()
+  const name = normalizeJobNameForRule(rawName)
+
+  const dcoMain = 'DDVE-DCO FISICA - MENSUAL - DIA 29'
+  const ticMain = 'DDVE-TIC FISICA - MENSUAL - DIA 29'
+
+  const isDcoChild =
+    name === `${dcoMain} - DDVE-DCO` ||
+    name === `${dcoMain} - DDVE DCO`
+
+  const isTicChild =
+    name === `${ticMain} - DDVE-TIC` ||
+    name === `${ticMain} - DDVE TIC`
+
+  return isDcoChild || isTicChild
+}
+
+function filterDashboardRows(rows, windowStartDate) {
+  const weekendWindow = isWeekendOperationalWindow(windowStartDate)
+
+  return (Array.isArray(rows) ? rows : []).filter((row) => {
+    const status = normalizeStatus(row.status)
+
+    if (status === 'no-run' || status === 'idle') {
+      return false
+    }
+
+    if (isDdvePhysicalChildDuplicate(row)) {
+      return false
+    }
+
+    if (weekendWindow && isAs400PrRrWeekendExcluded(row)) {
+      return false
+    }
+
+    return true
+  })
+}
+
 function formatBackupDateFromWindow(windowStartIso) {
   const d = new Date(windowStartIso)
 
@@ -134,30 +200,183 @@ function formatBackupDateFromWindow(windowStartIso) {
   }).toUpperCase()
 }
 
+function normalizeB2Status(row) {
+  return normalizeStatus(row?.status || row?.state)
+}
+
+function getGlobalState(row) {
+  const rawStatus = normalizeB2Status(row)
+
+  if (
+    rawStatus === 'no-run' ||
+    rawStatus === 'no_run' ||
+    rawStatus === 'norun'
+  ) {
+    return 'NO-RUN'
+  }
+
+  if (rawStatus === 'success') return 'SUCCESS'
+
+  if (rawStatus === 'warning' || rawStatus === 'warn') {
+    return 'WARNING'
+  }
+
+  if (
+    rawStatus === 'error' ||
+    rawStatus === 'failed' ||
+    rawStatus === 'failure'
+  ) {
+    return 'ERROR'
+  }
+
+  // B-2: running + pending se unifican como EN CURSO
+  if (rawStatus === 'running' || rawStatus === 'pending') {
+    return 'RUNNING'
+  }
+
+  return 'UNKNOWN'
+}
+
+function getProgressValue(row) {
+  const candidates = [
+    row?.progress,
+    row?.progressPercent,
+    row?.percent,
+    row?.progressPct,
+    row?.completionPercent,
+  ]
+
+  for (const value of candidates) {
+    if (value !== undefined && value !== null && value !== '') {
+      const n = Number(String(value).replace('%', '').trim())
+      if (Number.isFinite(n)) return Math.round(n)
+    }
+  }
+
+  return null
+}
+
+function detectRowSource(row) {
+  const value = String(
+    row?.source ||
+    row?.sourceType ||
+    row?.parserSource ||
+    row?.type ||
+    ''
+  ).toLowerCase()
+
+  if (value.includes('as400') || value.includes('ibm')) return 'as400'
+  if (value.includes('barracuda')) return 'barracuda'
+
+  if (
+    value.includes('vdc') ||
+    value.includes('veeam data cloud') ||
+    value.includes('data cloud')
+  ) {
+    return 'vdc'
+  }
+
+  if (
+    value.includes('veeam') ||
+    value.includes('sql') ||
+    value.includes('backup & replication')
+  ) {
+    return 'veeam'
+  }
+
+  return value
+}
+
+function buildSmartDetail(row) {
+  const rawStatus = normalizeB2Status(row)
+  const source = detectRowSource(row)
+
+  if (
+    rawStatus === 'no-run' ||
+    rawStatus === 'no_run' ||
+    rawStatus === 'norun'
+  ) {
+    return 'Sin ejecución'
+  }
+
+// Veeam SQL
+// Si viene de SQL/Veeam, significa que existe sesión en BBDD.
+// Por tanto, running y pending técnico se presentan como ejecución real.
+if (source === 'veeam' || source === 'sql') {
+  if (rawStatus === 'running' || rawStatus === 'pending') {
+    const progress = getProgressValue(row)
+
+    if (progress !== null) {
+      return `En ejecución (${progress}%)`
+    }
+
+    return 'En ejecución'
+  }
+}
+
+  // Jobs por email: AS400 / Barracuda / VDC
+  if (
+    source === 'as400' ||
+    source === 'barracuda' ||
+    source === 'vdc' ||
+    source === 'email'
+  ) {
+    if (rawStatus === 'pending') {
+      return 'Pendiente recepción'
+    }
+  }
+
+  return row?.detail || row?.reason || row?.message || ''
+}
+
+function applyB2StateModel(row) {
+  const globalState = getGlobalState(row)
+  const detail = buildSmartDetail(row)
+
+  return {
+    ...row,
+    globalState,
+    detail,
+  }
+}
+
 function getPayloadSummary(payload) {
   const rows = Array.isArray(payload?.fullRows) ? payload.fullRows : []
 
   const summary = {
-    total: rows.length,
+    total: 0,
     success: 0,
     warning: 0,
     failed: 0,
     error: 0,
     running: 0,
     pending: 0,
+    noRun: 0,
     other: 0,
   }
 
   for (const row of rows) {
+    const globalState = row?.globalState || getGlobalState(row)
     const status = normalizeStatus(row?.status)
 
-    if (status === 'success') summary.success += 1
-    else if (status === 'warning' || status === 'warn') summary.warning += 1
-    else if (status === 'failed') summary.failed += 1
-    else if (status === 'error') summary.error += 1
-    else if (status === 'running') summary.running += 1
-    else if (status === 'pending') summary.pending += 1
-    else summary.other += 1
+    if (globalState === 'NO-RUN') {
+      summary.noRun += 1
+      continue
+    }
+
+    summary.total += 1
+
+    if (globalState === 'SUCCESS') summary.success += 1
+    else if (globalState === 'WARNING') summary.warning += 1
+    else if (globalState === 'ERROR') {
+      if (status === 'failed') summary.failed += 1
+      else summary.error += 1
+    } else if (globalState === 'RUNNING') {
+      summary.running += 1
+      if (status === 'pending') summary.pending += 1
+    } else {
+      summary.other += 1
+    }
   }
 
   return summary
@@ -173,6 +392,7 @@ function sanitizeRowForFrontend(row) {
     source: safeString(row.source),
     status: safeString(row.status),
     reason: safeString(row.reason),
+    detail: safeString(row.detail || row.reason),
     type: safeString(row.type),
   }
 }
@@ -182,7 +402,7 @@ function decorateLogAvailability(row) {
 
   const jobName = safeString(row.jobName || row.name || row.title).toLowerCase()
   const source = safeString(row.source || row.type).toLowerCase()
-  const reason = safeString(row.reason).toLowerCase()
+  const reason = safeString(row.reason || row.detail).toLowerCase()
 
   const hasEmailEvidence = Boolean(
     row.lastEmailDate ||
@@ -341,7 +561,7 @@ async function buildRefreshPayloadForWindow(cfg, inicio, fin, includeSql = true)
     fin,
     '',
     criticalityByJob
-  ).map(r => applyManualOverride(r, overrides, ahora))
+  ).map((r) => applyManualOverride(r, overrides, ahora))
 
   const barraRows = buildBarracudaRows(
     cfg?.barracudaRules || [],
@@ -350,7 +570,7 @@ async function buildRefreshPayloadForWindow(cfg, inicio, fin, includeSql = true)
     fin,
     '',
     criticalityByJob
-  ).map(r => applyManualOverride(r, overrides, ahora))
+  ).map((r) => applyManualOverride(r, overrides, ahora))
 
   const as400Rows = (
     await buildAs400Rows(
@@ -361,7 +581,7 @@ async function buildRefreshPayloadForWindow(cfg, inicio, fin, includeSql = true)
       cfg,
       criticalityByJob
     )
-  ).map(r => applyManualOverride(r, overrides, ahora))
+  ).map((r) => applyManualOverride(r, overrides, ahora))
 
   function cleanRow(row) {
     row = sanitizeRowForFrontend(decorateLogAvailability(row))
@@ -383,6 +603,7 @@ async function buildRefreshPayloadForWindow(cfg, inicio, fin, includeSql = true)
         ...row,
         status: 'pending',
         reason: 'Pendiente ejecución',
+        detail: 'Pendiente ejecución',
         duration: '',
         durationMs: null,
         durationTrend: null,
@@ -407,14 +628,38 @@ async function buildRefreshPayloadForWindow(cfg, inicio, fin, includeSql = true)
     return sanitizeRowForFrontend(decorateLogAvailability({
       ...row,
       ...(manualStatus ? { status: manualStatus } : {}),
-      ...(manualComment ? { reason: manualComment } : {}),
+      ...(manualComment ? { reason: manualComment, detail: manualComment } : {}),
     }))
   }
+
+  function applyWeekendNoRunForAs400(row) {
+    row = sanitizeRowForFrontend(decorateLogAvailability(row))
+
+    if (isWeekendOperationalWindow(inicio) && isAs400PrRrWeekendExcluded(row)) {
+      return sanitizeRowForFrontend(decorateLogAvailability({
+        ...row,
+        status: 'no-run',
+        reason: 'Sin ejecución',
+        detail: 'Sin ejecución',
+        duration: '',
+        durationMs: null,
+        durationTrend: null,
+        lastRun: null,
+        lastResult: -1,
+        startTimeDisplay: '',
+        endTimeDisplay: '',
+      }))
+    }
+
+    return row
+  }
+
   // Catalogo fijo AS400/email:
   // Los jobs definidos en cfg.as400Rules deben existir siempre en Directorio de Jobs.
   // No se inyectan como SQL porque su historico depende de reglas AS400/email.
+
   const existingAs400JobNames = new Set(
-    (Array.isArray(as400Rows) ? as400Rows : []).map(function (r) {
+    (Array.isArray(as400Rows) ? as400Rows : []).map((r) => {
       return safeString(r && (r.jobName || r.name || r.title)).toUpperCase().trim()
     })
   )
@@ -422,19 +667,20 @@ async function buildRefreshPayloadForWindow(cfg, inicio, fin, includeSql = true)
   function ensureAs400CatalogFromRules() {
     const rules = Array.isArray(cfg && cfg.as400Rules) ? cfg.as400Rules : []
 
-    rules.forEach(function (rule) {
+    rules.forEach((rule) => {
       const jobName = safeString(rule && (rule.title || rule.name)).trim()
       const key = jobName.toUpperCase()
 
       if (!key || existingAs400JobNames.has(key)) return
 
       as400Rows.push({
-        jobName: jobName,
+        jobName,
         name: jobName,
         source: 'as400',
         type: 'as400',
         status: 'pending',
         reason: 'Pendiente recepción',
+        detail: 'Pendiente recepción',
         duration: '',
         durationMs: null,
         durationTrend: null,
@@ -454,12 +700,54 @@ async function buildRefreshPayloadForWindow(cfg, inicio, fin, includeSql = true)
   }
 
   ensureAs400CatalogFromRules()
+
+  // Catálogo obligatorio AS400
+  const forcedAs400Jobs = ['Backup SD', 'Backup PR', 'Backup RR', 'Backup SDB/TGT']
+
+  forcedAs400Jobs.forEach((jobName) => {
+    const key = jobName.toUpperCase()
+    const normalizedName = normalizeJobNameForRule(jobName)
+    const isPrRr = normalizedName === 'BACKUP PR' || normalizedName === 'BACKUP RR'
+    const weekendWindow = isWeekendOperationalWindow(inicio)
+
+    if (existingAs400JobNames.has(key)) return
+
+    as400Rows.push({
+      jobName,
+      name: jobName,
+      source: 'as400',
+      type: 'as400',
+
+      // PR/RR en fin de semana existen para Directorio, pero no computan como pendientes.
+      status: isPrRr && weekendWindow ? 'no-run' : 'pending',
+      reason: isPrRr && weekendWindow ? 'Sin ejecución' : 'Pendiente recepción',
+      detail: isPrRr && weekendWindow ? 'Sin ejecución' : 'Pendiente recepción',
+
+      duration: '',
+      durationMs: null,
+      durationTrend: null,
+      lastRun: null,
+      lastResult: -1,
+      endTimeDisplay: '',
+      hasLog: true,
+      logAvailable: true,
+      hasEmailLog: true,
+      emailLogAvailable: true,
+      canOpenLog: true,
+      logIcon: true,
+    })
+
+    existingAs400JobNames.add(key)
+  })
+
   const fullRows = [...sqlFullRows, ...vdcRows, ...barraRows, ...as400Rows]
     .map(sanitizeRowForFrontend)
     .map(decorateLogAvailability)
     .map(cleanRow)
     .map(applyManualOverrideFinal)
+    .map(applyWeekendNoRunForAs400)
     .map(sanitizeRowForFrontend)
+    .map(applyB2StateModel)
     .sort((a, b) => {
       const aTime = new Date(a.nextRun || 0).getTime()
       const bTime = new Date(b.nextRun || 0).getTime()
@@ -474,13 +762,19 @@ async function buildRefreshPayloadForWindow(cfg, inicio, fin, includeSql = true)
       return bTime - aTime
     })
 
+  // SOLO para dashboard
+  const dashboardRows = filterDashboardRows(fullRows, inicio)
+
   return {
     ok: true,
-    rows: fullRows.filter((r) => normalizeStatus(r.status) !== 'success'),
-    fullRows,
     ts: ahora.toISOString(),
     windowStart: inicio.toISOString(),
     windowEnd: fin.toISOString(),
+    rows: dashboardRows.filter((r) => {
+      const state = r.globalState || getGlobalState(r)
+      return state !== 'SUCCESS' && state !== 'NO-RUN'
+    }),
+    fullRows,
   }
 }
 
@@ -509,14 +803,16 @@ async function runRefresh() {
         fs.mkdirSync(folderPath, { recursive: true })
       }
 
-      const datosParaMovil = payload.fullRows.map(r => ({
+      const datosParaMovil = payload.fullRows.map((r) => ({
         backup_policy_name: r.jobName,
-        status: r.status,
+        status: r.globalState || r.status,
+        raw_status: r.status,
         result: r.lastResult,
         creation_time: r.nextRun,
         end_time: r.lastRun,
         duration: r.duration,
-        reason: r.reason,
+        reason: r.detail || r.reason,
+        detail: r.detail || r.reason,
         criticality: r.criticality,
         source: r.source,
       }))
@@ -536,7 +832,7 @@ async function runRefresh() {
     const summary = getPayloadSummary(payload)
 
     console.log(
-      `[REFRESH] OK — total=${summary.total}, ok=${summary.success}, avisos=${summary.warning}, errores=${summary.failed + summary.error}, running=${summary.running}, pending=${summary.pending}, ${new Date().toLocaleTimeString()}`
+      `[REFRESH] OK — total=${summary.total}, ok=${summary.success}, avisos=${summary.warning}, errores=${summary.failed + summary.error}, enCurso=${summary.running}, noRun=${summary.noRun}, pendingTecnico=${summary.pending}, ${new Date().toLocaleTimeString()}`
     )
 
     return payload
@@ -575,11 +871,6 @@ async function sendDailyReport() {
       return false
     }
 
-    /*
-      FIX CRITICO:
-      El correo diario debe usar el mismo snapshot que verá la UI.
-      Por eso se fuerza siempre un refresh justo antes de generar el HTML.
-    */
     console.log('[S-1] Forzando refresh previo al envio para sincronizar correo y dashboard...')
 
     const freshPayload = await runRefresh()
@@ -603,7 +894,7 @@ async function sendDailyReport() {
     console.log('[S-1]   windowEnd  :', data.windowEnd)
     console.log('[S-1]   ts         :', data.ts)
     console.log(
-      `[S-1]   resumen    : total=${summary.total}, ok=${summary.success}, avisos=${summary.warning}, errores=${summary.failed + summary.error}, running=${summary.running}, pending=${summary.pending}, other=${summary.other}`
+      `[S-1]   resumen    : total=${summary.total}, ok=${summary.success}, avisos=${summary.warning}, errores=${summary.failed + summary.error}, enCurso=${summary.running}, noRun=${summary.noRun}, pendingTecnico=${summary.pending}, other=${summary.other}`
     )
 
     const fromEnv = (process.env.BM_DAILY_REPORT_TO || '').trim()
@@ -716,12 +1007,10 @@ async function authMiddleware(req, res, next) {
 
   const queryToken = req.query?.token || ''
 
-  // 1) Fallback actual: BM_AUTH_TOKEN.
   if (AUTH_TOKEN && (bearerToken === AUTH_TOKEN || queryToken === AUTH_TOKEN)) {
     return next()
   }
 
-  // 2) Futuro: Microsoft Entra ID.
   try {
     if (bearerToken) {
       const decoded = await verifyEntraToken(bearerToken)
@@ -1207,7 +1496,7 @@ function startHttpFallback(reason) {
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log('='.repeat(60))
-    console.log('  BackupMonitor Server v4.0')
+    console.log('  BackupMonitor Server v5.0')
     console.log('  HTTP: http://localhost:' + PORT)
     console.log('  Motivo fallback: ' + reason)
     console.log('  Auth: ' + (AUTH_TOKEN ? 'Token configurado' : 'SIN AUTENTICACION'))
@@ -1236,7 +1525,7 @@ if (fs.existsSync(pfxPath)) {
 
     httpsServer.listen(HTTPS_PORT, '0.0.0.0', () => {
       console.log('='.repeat(60))
-      console.log('  BackupMonitor Server v4.0')
+      console.log('  BackupMonitor Server v5.0')
       console.log('  HTTPS: https://dashboard' + (HTTPS_PORT === 443 ? '' : ':' + HTTPS_PORT))
       console.log('  HTTP:  http://dashboard:' + HTTP_REDIRECT_PORT + ' (redirige a HTTPS)')
       console.log('  Modo: Express + HTTPS')

@@ -1,5 +1,70 @@
 # Changelog
 
+## [5.0.0] - 2026-06-29
+
+### ✨ Añadido / Mejorado
+
+- B-2: Unificación funcional de estados `running` + `pending` como **EN CURSO**.
+- El dashboard deja de mostrar estados técnicos `RUNNING` / `PENDING` al usuario.
+- El estado visible pasa a ser **EN CURSO** para jobs en ejecución o pendientes técnicos.
+- B-2.1: Detalle inteligente por tipo de fuente:
+  - Jobs SQL/Veeam en curso se muestran como **En ejecución**.
+  - Jobs por email/AS400/Barracuda/VDC pendientes se muestran como **Pendiente recepción**.
+  - Jobs `NO-RUN` se muestran como **Sin ejecución** y quedan fuera de KPIs/NOK.
+- El filtro NOK queda restringido a incidencias reales: `WARNING` / `ERROR`.
+- KPIs ajustados para contar **EN CURSO** como `running + pending técnico`.
+- Correo diario alineado con el nuevo modelo de estados:
+  - `RUNNING/PENDING` técnico → **EN CURSO**
+  - `NO-RUN` fuera de KPIs
+  - banner rojo solo con `WARNING` / `ERROR`
+- Export JSON móvil enriquecido con:
+  - `status` global
+  - `raw_status`
+  - `detail`
+
+### 🖥️ UI / Logs
+
+- UI-1 cerrado: iconos de log visibles y operativos para jobs por email:
+  - AS400
+  - Veeam Data Cloud
+  - Barracuda
+- UI-2 cerrado: mejora visual del formato de logs AS400 en el modal **LOG BACKUP**.
+- Colores AS400 aplicados por tipo de job:
+  - `Backup SD` → verde `#00FF00`
+  - `Backup PR` → rojo `#F01818`
+  - `Backup RR` → amarillo `#A0A000`
+  - `Backup SDB/TGT` → azul `#7890F0`
+- UI-3 cerrado: limpieza visual de logs Barracuda/VDC:
+  - eliminado footer comercial de Barracuda
+  - eliminado bloque VDC `Please view your backup logs... / View logs / N`
+- Modal de logs renombrado a **LOG BACKUP**.
+- Validación visual OK en `https://dashboard` tras refresco/caché.
+
+### 🐛 Corregido
+
+- Jobs SQL/Veeam que ya existen en BBDD no muestran ya **Pendiente ejecución**.
+- El detalle para jobs SQL/Veeam pasa a ser **En ejecución** cuando están en curso.
+- El componente `JobTable` deja de pintar estados técnicos y usa etiquetas visibles normalizadas.
+- El correo deja de mostrar `PENDING` / `RUNNING` como texto técnico.
+- Los jobs `NO-RUN` quedan fuera de KPIs y fuera del filtro NOK.
+
+### ⚠️ Pendiente conocido
+
+- Recuperar y mostrar el porcentaje real de progreso en jobs SQL/Veeam cuando Veeam lo exponga en la fila disponible.
+- Actualmente, si no llega porcentaje, el detalle queda como **En ejecución**.
+
+### 🔧 Interno
+
+- Cambios principales en:
+  - `server.js`
+  - `src/App.tsx`
+  - `src/components/JobTable.tsx`
+  - `electron/modules/emailBuilder.cjs`
+  - `electron/modules/graph.cjs`
+- Modelo B-2/B-2.1 consolidado como base para futura versión móvil/PWA.
+- UI-1/UI-2/UI-3 quedan incorporados oficialmente al cierre funcional de v5.0.0.
+
+
 ## v4.0.0 - 2026-06-28
 
 ### Cerrado

@@ -18,7 +18,6 @@ import { JOB_CATEGORIES } from "./types/ui"
 import { api } from "./utils/api"
 import {
   safeLower,
-  buildKpis,
   getWindowParts,
   statusOrder,
   sourceRank,
@@ -55,6 +54,222 @@ function getAs400LogColor(jobName?: string) {
   if (name.includes("sdb") || name.includes("tgt")) return "#7890F0"
 
   return "#E5E7EB"
+}
+
+function formatBackupTitleDay(value?: string | null) {
+  if (!value) return ""
+
+  const d = new Date(value)
+
+  if (Number.isNaN(d.getTime())) return ""
+
+  return d.toLocaleDateString("es-ES", {
+    day: "2-digit",
+    month: "long",
+    year: "numeric",
+  }).toUpperCase()
+}
+
+function formatBackupWindowRange(startValue?: string | null, endValue?: string | null) {
+  if (!startValue || !endValue) return ""
+
+  const start = new Date(startValue)
+  const end = new Date(endValue)
+
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return ""
+
+  // La ventana del backend es inicio inclusivo / fin exclusivo:
+  // 18:00 del día anterior -> 18:00 del día actual.
+  // En UI se muestra como 18:00 -> 17:59.
+  const displayEnd = new Date(end.getTime() - 60 * 1000)
+
+  const fmtDate = (d: Date) =>
+    d.toLocaleDateString("es-ES", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+    })
+
+  const fmtTime = (d: Date) =>
+    d.toLocaleTimeString("es-ES", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    })
+
+  return `Ventana ${fmtDate(start)}, ${fmtTime(start)} — ${fmtDate(displayEnd)}, ${fmtTime(displayEnd)}`
+}
+
+function normalizeNameForUi(value?: string | null) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase()
+}
+
+function normalizeUiState(value?: string | null) {
+  return String(value || "").trim().toLowerCase()
+}
+
+function getDisplayState(row?: JobRowUi | null): string {
+  const anyRow = row as any
+
+  const raw = String(
+    anyRow?.globalState ||
+    anyRow?.status ||
+    anyRow?.state ||
+    ""
+  ).trim()
+
+  const s = raw.toUpperCase()
+
+  if (s === "WARN") return "WARNING"
+  if (s === "FAILED" || s === "FAILURE") return "ERROR"
+  if (s === "NO_RUN" || s === "NORUN") return "NO-RUN"
+
+  // B-2: PENDING técnico también se visualiza como RUNNING / EN CURSO.
+  if (s === "PENDING") return "RUNNING"
+
+  return s
+}
+
+function getDisplayStateLower(row?: JobRowUi | null): string {
+  return getDisplayState(row).toLowerCase()
+}
+
+function getStateLabel(row?: JobRowUi | null): string {
+  const state = getDisplayState(row)
+
+  if (state === "SUCCESS") return "SUCCESS"
+  if (state === "WARNING") return "WARNING"
+  if (state === "ERROR") return "ERROR"
+
+  // B-2
+  if (state === "RUNNING") return "EN CURSO"
+
+  if (state === "NO-RUN") return "SIN EJECUCIÓN"
+
+  return state || "-"
+}
+
+function getStateClass(row?: JobRowUi | null): string {
+  const state = getDisplayState(row)
+
+  if (state === "SUCCESS") return "success"
+  if (state === "WARNING") return "warning"
+  if (state === "ERROR") return "error"
+
+  // B-2
+  if (state === "RUNNING") return "running"
+
+  if (state === "NO-RUN") return "no-run"
+
+  return "unknown"
+}
+
+function isNoRunRow(row?: JobRowUi | null) {
+  const state = getDisplayState(row)
+  const status = normalizeUiState((row as any)?.status)
+
+  return (
+    state === "NO-RUN" ||
+    status === "no-run" ||
+    status === "no_run" ||
+    status === "norun" ||
+    status === "idle"
+  )
+}
+
+function isNokRow(row?: JobRowUi | null) {
+  const state = getDisplayState(row)
+  return state === "WARNING" || state === "ERROR"
+}
+
+function isSuccessRow(row?: JobRowUi | null) {
+  return getDisplayState(row) === "SUCCESS"
+}
+
+function isRunningUiRow(row?: JobRowUi | null) {
+  return getDisplayState(row) === "RUNNING"
+}
+
+function isBackupPrRrRow(row?: JobRowUi | null) {
+  const name = normalizeNameForUi(row?.jobName || "")
+  return name === "backup pr" || name === "backup rr"
+}
+
+function normalizeB2Row(row: JobRowUi): JobRowUi {
+  const anyRow = row as any
+
+  const rawStatus = String(anyRow?.status || anyRow?.state || "").trim().toLowerCase()
+  const globalState = String(anyRow?.globalState || "").trim().toUpperCase()
+  const displayState = getDisplayState(row)
+
+  let normalizedStatus = rawStatus
+
+  if (displayState === "SUCCESS") normalizedStatus = "success"
+  else if (displayState === "WARNING") normalizedStatus = "warning"
+  else if (displayState === "ERROR") normalizedStatus = "failed"
+  else if (displayState === "RUNNING") normalizedStatus = "running"
+  else if (displayState === "NO-RUN") normalizedStatus = "no-run"
+
+  const detail = String(anyRow?.detail || anyRow?.reason || "")
+
+  return {
+    ...row,
+    ...(anyRow?.rawStatus ? {} : { rawStatus }),
+    globalState: globalState || displayState,
+    status: normalizedStatus,
+    reason: detail,
+    detail,
+    stateLabel: getStateLabel({
+      ...row,
+      globalState: globalState || displayState,
+      status: normalizedStatus,
+    } as any),
+    stateClass: getStateClass({
+      ...row,
+      globalState: globalState || displayState,
+      status: normalizedStatus,
+    } as any),
+  } as any
+}
+
+function normalizeB2Rows(input: JobRowUi[] | undefined | null): JobRowUi[] {
+  return (Array.isArray(input) ? input : []).map(normalizeB2Row)
+}
+
+function computeB2Kpis(inputRows: JobRowUi[]) {
+  const kpis = {
+    total: 0,
+    success: 0,
+    warning: 0,
+    failed: 0,
+    error: 0,
+    running: 0,
+    pending: 0,
+  }
+
+  for (const row of inputRows || []) {
+    if (isNoRunRow(row)) continue
+
+    const state = getDisplayState(row)
+
+    kpis.total += 1
+
+    if (state === "SUCCESS") kpis.success += 1
+    else if (state === "WARNING") kpis.warning += 1
+    else if (state === "ERROR") {
+      kpis.failed += 1
+      kpis.error += 1
+    } else if (state === "RUNNING") {
+      kpis.running += 1
+    }
+  }
+
+  return kpis
 }
 
 export default function App() {
@@ -117,18 +332,24 @@ export default function App() {
       const p = ((await api().refresh()) as RefreshPayload | null) ?? null
 
       if ((p as any)?.ok) {
-        setRows(((p as any).rows ?? []) as JobRowUi[])
-        setFullRows(((p as any).fullRows ?? []) as JobRowUi[])
+        setRows(normalizeB2Rows(((p as any).rows ?? []) as JobRowUi[]))
+        setFullRows(normalizeB2Rows(((p as any).fullRows ?? []) as JobRowUi[]))
         setLastRun((p as any).ts ?? null)
 
         if ((p as any).windowStart) {
           setWindowStart((p as any).windowStart)
-          if (tab === "dashboard") setDisplayWindowStart((p as any).windowStart)
+
+          if (tab === "dashboard") {
+            setDisplayWindowStart((p as any).windowStart)
+          }
         }
 
         if ((p as any).windowEnd) {
           setWindowEnd((p as any).windowEnd)
-          if (tab === "dashboard") setDisplayWindowEnd((p as any).windowEnd)
+
+          if (tab === "dashboard") {
+            setDisplayWindowEnd((p as any).windowEnd)
+          }
         }
       } else {
         setErr((p as any)?.error ?? "Error desconocido")
@@ -166,11 +387,28 @@ export default function App() {
 
     const maybeCleanup = api().onAutoUpdate?.((p: RefreshPayload) => {
       if ((p as any)?.ok) {
-        setRows(((p as any).rows ?? []) as JobRowUi[])
-        setFullRows(((p as any).fullRows ?? []) as JobRowUi[])
-        if ((p as any).ts) setLastRun((p as any).ts)
-        if ((p as any).windowStart) setWindowStart((p as any).windowStart)
-        if ((p as any).windowEnd) setWindowEnd((p as any).windowEnd)
+        setRows(normalizeB2Rows(((p as any).rows ?? []) as JobRowUi[]))
+        setFullRows(normalizeB2Rows(((p as any).fullRows ?? []) as JobRowUi[]))
+
+        if ((p as any).ts) {
+          setLastRun((p as any).ts)
+        }
+
+        if ((p as any).windowStart) {
+          setWindowStart((p as any).windowStart)
+
+          if (tab === "dashboard") {
+            setDisplayWindowStart((p as any).windowStart)
+          }
+        }
+
+        if ((p as any).windowEnd) {
+          setWindowEnd((p as any).windowEnd)
+
+          if (tab === "dashboard") {
+            setDisplayWindowEnd((p as any).windowEnd)
+          }
+        }
       } else {
         refresh()
       }
@@ -188,7 +426,7 @@ export default function App() {
       if (typeof maybeCleanup === "function") maybeCleanup()
       if (pollingId) clearInterval(pollingId)
     }
-  }, [refresh, configPanelOpen, editingJobId, emailModal, logModalData])
+  }, [refresh, configPanelOpen, editingJobId, emailModal, logModalData, tab])
 
   useEffect(() => {
     if (tab === "dashboard") {
@@ -221,7 +459,7 @@ export default function App() {
     return Array.from(names).sort((a, b) => String(a).localeCompare(String(b), "es", { sensitivity: "base" }))
   }, [dbJobs, fullRows, rows])
 
-  const { rowsCalendario, fullRowsCalendario } = useMemo(() => {
+  const { fullRowsCalendario } = useMemo(() => {
     const ahora = new Date()
     const diaActual = ahora.getDay()
     const esFinDeSemana = diaActual === 0 || diaActual === 6
@@ -233,12 +471,9 @@ export default function App() {
     const filtrarJob = (r: JobRowUi) => {
       if (!r.jobName) return true
 
-      const name = safeLower(r.jobName)
-
-      if (
-        (r.source === "sql" || r.source === "both") &&
-        (name.includes("pr") || name.includes("rr"))
-      ) {
+      // Solo se excluyen los AS400 exactos Backup PR / Backup RR.
+      // No se filtran genéricamente nombres SQL que contengan "pr" o "rr".
+      if (isBackupPrRrRow(r)) {
         return false
       }
 
@@ -251,18 +486,31 @@ export default function App() {
     }
   }, [rows, fullRows])
 
-  const kpis = useMemo(() => buildKpis(fullRowsCalendario), [fullRowsCalendario])
+  const dashboardRows = useMemo(() => {
+    return fullRowsCalendario.filter((r) => !isNoRunRow(r))
+  }, [fullRowsCalendario])
+
+  const kpis = useMemo(() => computeB2Kpis(dashboardRows), [dashboardRows])
+
   const { day, range } = getWindowParts(windowStart, windowEnd)
-  const { day: displayDay, range: displayRange } = getWindowParts(displayWindowStart, displayWindowEnd)
+
+  const effectiveWindowStart = displayWindowStart || windowStart
+  const effectiveWindowEnd = displayWindowEnd || windowEnd
+
+  const titleDay = formatBackupTitleDay(effectiveWindowStart)
+  const titleRange = formatBackupWindowRange(effectiveWindowStart, effectiveWindowEnd)
 
   const filtered = useMemo(() => {
-    let source = fullRowsCalendario
+    let source = dashboardRows
 
     if (activeCategory !== "all") {
       source = source.filter((r) => {
         const name = safeLower(r.jobName || "")
 
-        if (activeCategory === "nok") return r.status !== "success"
+        if (activeCategory === "nok") {
+          if (isNoRunRow(r)) return false
+          return isNokRow(r)
+        }
 
         if (activeCategory === "veeam") {
           return (
@@ -303,8 +551,14 @@ export default function App() {
       })
     } else if (statusFilter !== "all") {
       source = source.filter((r) => {
-        if (statusFilter === "running") return r.status === "running" || r.status === "pending"
-        return r.status === statusFilter
+        if (isNoRunRow(r)) return false
+
+        if (statusFilter === "running") return isRunningUiRow(r)
+        if (statusFilter === "success") return isSuccessRow(r)
+        if (statusFilter === "warning") return getDisplayState(r) === "WARNING"
+        if (statusFilter === "failed") return getDisplayState(r) === "ERROR"
+
+        return getDisplayStateLower(r) === String(statusFilter).toLowerCase()
       })
     }
 
@@ -319,7 +573,7 @@ export default function App() {
       const get = (r: JobRowUi): string | number => {
         switch (sortKey) {
           case "status":
-            return statusOrder(r.status)
+            return statusOrder(getDisplayStateLower(r))
           case "jobName":
             return safeLower(r.jobName)
           case "nextRun":
@@ -329,7 +583,7 @@ export default function App() {
           case "duration":
             return r.durationMs ?? -1
           case "reason":
-            return safeLower(r.reason)
+            return safeLower((r as any).detail || r.reason)
           default:
             return 0
         }
@@ -340,15 +594,15 @@ export default function App() {
 
       return va < vb ? -1 * dir : va > vb ? 1 * dir : 0
     })
-  }, [fullRowsCalendario, filter, statusFilter, sortKey, sortDir, activeCategory])
+  }, [dashboardRows, filter, statusFilter, sortKey, sortDir, activeCategory])
 
   const emailPreviewHtml = useMemo(
-    () => buildEmailHtml(fullRowsCalendario, kpis, day, range),
-    [fullRowsCalendario, kpis, day, range]
+    () => buildEmailHtml(dashboardRows, kpis, day, range),
+    [dashboardRows, kpis, day, range]
   )
 
   function exportToExcel() {
-    const wb = buildExcelWorkbook(fullRowsCalendario, kpis, day, range)
+    const wb = buildExcelWorkbook(dashboardRows, kpis, day, range)
     XLSX.writeFile(wb, `Backups_${(day || "sin_fecha").replace(/\s+/g, "_")}.xlsx`)
   }
 
@@ -433,8 +687,8 @@ export default function App() {
       const p = ((await api().refresh()) as RefreshPayload | null) ?? null
 
       if ((p as any)?.ok) {
-        setRows(((p as any).rows ?? []) as JobRowUi[])
-        setFullRows(((p as any).fullRows ?? []) as JobRowUi[])
+        setRows(normalizeB2Rows(((p as any).rows ?? []) as JobRowUi[]))
+        setFullRows(normalizeB2Rows(((p as any).fullRows ?? []) as JobRowUi[]))
         setLastRun((p as any).ts ?? null)
 
         if ((p as any).windowStart) {
@@ -561,12 +815,12 @@ export default function App() {
           {tab !== "executions" && (
             <div className="window-title">
               <span className="window-title-main">
-                SITUACIÓN BACKUP DEL DÍA {typeof displayDay === "string" ? displayDay : ""}
+                SITUACIÓN BACKUP DEL DÍA {titleDay}
               </span>
 
-              {displayRange && (
+              {titleRange && (
                 <span className="window-title-range">
-                  {typeof displayRange === "string" ? displayRange : ""}
+                  {titleRange}
                 </span>
               )}
             </div>
@@ -631,7 +885,7 @@ export default function App() {
 
                 <Kpi
                   label="En curso"
-                  value={kpis.running + kpis.pending}
+                  value={kpis.running}
                   accentColor="#60a5fa"
                   active={statusFilter === "running"}
                   onClick={() => handleDashboardKpiClick("running")}
@@ -663,7 +917,7 @@ export default function App() {
 
                   <button
                     onClick={exportToExcel}
-                    disabled={fullRows.length === 0}
+                    disabled={dashboardRows.length === 0}
                     style={{ background: "#2563eb", color: "white" }}
                   >
                     Exportar
@@ -804,8 +1058,8 @@ export default function App() {
           <CommentEditor
             jobName={editingJob.jobName}
             currentComment={editingOverride?.comment ?? ""}
-            currentStatus={editingOverride?.status ?? normalizeManualStatusUi(editingJob.status)}
-            autoReason={editingJob.reason ?? ""}
+            currentStatus={editingOverride?.status ?? normalizeManualStatusUi((editingJob as any).rawStatus || editingJob.status)}
+            autoReason={(editingJob as any).detail || editingJob.reason || ""}
             onSave={saveManualOverride}
             onClose={() => setEditingJobId(null)}
           />

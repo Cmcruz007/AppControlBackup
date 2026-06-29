@@ -15,20 +15,24 @@ function safeLower(s) {
 
 function sourceLabel(src) {
   const s = safeLower(src)
+
   if (s === 'sql' || s === 'veeam') return 'Veeam (SQL)'
   if (s === 'vdc') return 'Veeam Data Cloud'
   if (s === 'barracuda') return 'Barracuda'
   if (s === 'as400') return 'AS400'
   if (s === 'email') return 'Email'
   if (s === 'both') return 'Veeam + Email'
+
   return src || '—'
 }
 
 function formatLocal(iso) {
   if (!iso) return '—'
+
   try {
     const d = new Date(iso)
     if (isNaN(d.getTime())) return '—'
+
     return d.toLocaleString('es-ES', {
       day: '2-digit',
       month: '2-digit',
@@ -43,34 +47,96 @@ function formatLocal(iso) {
 
 function formatDuration(ms) {
   if (!ms || ms <= 0) return '—'
+
   const totalSec = Math.floor(ms / 1000)
   const h = Math.floor(totalSec / 3600)
   const m = Math.floor((totalSec % 3600) / 60)
   const s = totalSec % 60
+
   if (h > 0) return `${h}h ${m}m`
   if (m > 0) return `${m}m ${s}s`
   return `${s}s`
 }
 
-function computeKpis(rows) {
+// ─── B-2 / B-2.1: Estado global de correo ──────────────────────────────────
+
+function getEmailDisplayState(row) {
+  const raw = String(
+    row && (
+      row.globalState ||
+      row.status ||
+      row.state ||
+      ''
+    ) || ''
+  ).trim().toUpperCase()
+
+  if (raw === 'WARN') return 'WARNING'
+  if (raw === 'FAILED' || raw === 'FAILURE') return 'ERROR'
+  if (raw === 'NO_RUN' || raw === 'NORUN') return 'NO-RUN'
+
+  // B-2: pending técnico también se muestra como EN CURSO.
+  if (raw === 'PENDING') return 'RUNNING'
+
+  return raw
+}
+
+function getEmailStateLabel(row) {
+  const state = getEmailDisplayState(row)
+
+  if (state === 'SUCCESS') return 'SUCCESS'
+  if (state === 'WARNING') return 'WARNING'
+  if (state === 'ERROR') return 'ERROR'
+  if (state === 'RUNNING') return 'EN CURSO'
+  if (state === 'NO-RUN') return 'SIN EJECUCIÓN'
+
+  return state || '-'
+}
+
+function getEmailStateClass(row) {
+  const state = getEmailDisplayState(row)
+
+  if (state === 'SUCCESS') return 'success'
+  if (state === 'WARNING') return 'warning'
+  if (state === 'ERROR') return 'error'
+  if (state === 'RUNNING') return 'running'
+  if (state === 'NO-RUN') return 'no-run'
+
+  return 'unknown'
+}
+
+function computeKpis(rows = []) {
   const r = Array.isArray(rows) ? rows : []
+
   const kpis = {
-    total: r.length,
+    total: 0,
     success: 0,
     warning: 0,
     failed: 0,
+    error: 0,
     running: 0,
     pending: 0,
   }
 
-  for (const x of r) {
-    const s = safeLower(x.status)
+  for (const row of r) {
+    const state = getEmailDisplayState(row)
 
-    if (s === 'success') kpis.success++
-    else if (s === 'warning') kpis.warning++
-    else if (s === 'failed' || s === 'error') kpis.failed++
-    else if (s === 'running') kpis.running++
-    else if (s === 'pending') kpis.pending++
+    // NO-RUN queda fuera de KPIs.
+    if (state === 'NO-RUN') {
+      continue
+    }
+
+    kpis.total++
+
+    if (state === 'SUCCESS') {
+      kpis.success++
+    } else if (state === 'WARNING') {
+      kpis.warning++
+    } else if (state === 'ERROR') {
+      kpis.failed++
+      kpis.error++
+    } else if (state === 'RUNNING') {
+      kpis.running++
+    }
   }
 
   return kpis
@@ -79,9 +145,12 @@ function computeKpis(rows) {
 function hasIssuesByRows(rows) {
   const r = Array.isArray(rows) ? rows : []
 
-  return r.some((x) => {
-    const s = safeLower(x.status)
-    return s === 'warning' || s === 'error' || s === 'failed'
+  return r.some((row) => {
+    const state = getEmailDisplayState(row)
+
+    // WARNING / ERROR => banner rojo.
+    // SUCCESS / EN CURSO / NO-RUN => no fuerzan error.
+    return state === 'WARNING' || state === 'ERROR'
   })
 }
 
@@ -114,6 +183,18 @@ function defaultRange(payload) {
   return ''
 }
 
+function statusSortRank(row) {
+  const state = getEmailDisplayState(row)
+
+  if (state === 'ERROR') return 0
+  if (state === 'WARNING') return 1
+  if (state === 'RUNNING') return 2
+  if (state === 'NO-RUN') return 3
+  if (state === 'SUCCESS') return 4
+
+  return 5
+}
+
 function buildEmailHtml(payloadOrRows, kpis, day, range) {
   let rows
 
@@ -129,6 +210,8 @@ function buildEmailHtml(payloadOrRows, kpis, day, range) {
     rows = []
   }
 
+  rows = Array.isArray(rows) ? rows : []
+
   if (!kpis) kpis = computeKpis(rows)
   if (!day) day = defaultDay(null)
   if (!range) range = ''
@@ -136,29 +219,14 @@ function buildEmailHtml(payloadOrRows, kpis, day, range) {
   const total = kpis.total ?? 0
   const success = kpis.success ?? 0
   const warning = kpis.warning ?? 0
-  const failed = kpis.failed ?? 0
-  const running = (kpis.running ?? 0) + (kpis.pending ?? 0)
-
-  const statusOrderFn = (s) =>
-    s === 'failed' || s === 'error' ? 0 :
-    s === 'warning' ? 1 :
-    s === 'running' ? 2 :
-    s === 'pending' ? 3 : 4
+  const failed = kpis.failed ?? kpis.error ?? 0
+  const running = kpis.running ?? 0
 
   const emailRows = [...rows].sort((a, b) => {
-    const aStatus = safeLower(a.status)
-    const bStatus = safeLower(b.status)
+    const aRank = statusSortRank(a)
+    const bRank = statusSortRank(b)
 
-    const aIsSuccess = aStatus === 'success'
-    const bIsSuccess = bStatus === 'success'
-
-    if (!aIsSuccess && bIsSuccess) return -1
-    if (aIsSuccess && !bIsSuccess) return 1
-
-    if (!aIsSuccess && !bIsSuccess) {
-      const diff = statusOrderFn(aStatus) - statusOrderFn(bStatus)
-      if (diff !== 0) return diff
-    }
+    if (aRank !== bRank) return aRank - bRank
 
     const tA = a.nextRun ? new Date(a.nextRun).getTime() : 0
     const tB = b.nextRun ? new Date(b.nextRun).getTime() : 0
@@ -191,31 +259,32 @@ function buildEmailHtml(payloadOrRows, kpis, day, range) {
         ? '#f59e0b'
         : '#22c55e'
 
-    const s = safeLower(r.status)
+    const stateLabel = getEmailStateLabel(r)
+    const stateClass = getEmailStateClass(r)
 
     const statusColors = {
       success: ['166534', '22C55E', 'DCFCE7'],
       warning: ['854D0E', 'EAB308', 'FEF9C3'],
-      failed: ['7F1D1D', 'EF4444', 'FECACA'],
       error: ['7F1D1D', 'EF4444', 'FECACA'],
       running: ['075985', '06B6D4', 'E0F2FE'],
-      pending: ['1E3A8A', '3B82F6', 'DBEAFE'],
+      'no-run': ['334155', '64748B', 'E2E8F0'],
+      unknown: ['1E293B', '64748B', 'F1F5F9'],
     }
 
-    const sc = statusColors[s] || ['1E293B', '64748B', 'F1F5F9']
+    const sc = statusColors[stateClass] || statusColors.unknown
 
     const badge = r.relaunched
       ? `&nbsp;&nbsp;<span style="background:#422006;color:#fbbf24;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;font-family:Arial,sans-serif;border:1px solid #d97706">↺ Relanzado</span>`
       : ''
 
     const durationMs = r.durationMs || r.duration || 0
-    const reason = r.reason || r.lastResult || ''
+    const detail = r.detail || r.reason || r.lastResult || ''
 
     return `
       <tr bgcolor="#${bg}">
         <td width="90" style="padding:10px 12px;border-top:1px solid #1e3a5f;white-space:nowrap;min-width:90px">
           <table cellpadding="0" cellspacing="0" border="0"><tr><td bgcolor="#${sc[0]}" style="padding:4px 10px;border:1px solid #${sc[1]};border-radius:12px">
-            <span style="color:#${sc[2]};font-size:11px;font-weight:700;font-family:Arial,sans-serif;white-space:nowrap;">${escapeHtml(s.toUpperCase())}</span>
+            <span style="color:#${sc[2]};font-size:11px;font-weight:700;font-family:Arial,sans-serif;white-space:nowrap;">${escapeHtml(stateLabel)}</span>
           </td></tr></table>
         </td>
 
@@ -232,15 +301,10 @@ function buildEmailHtml(payloadOrRows, kpis, day, range) {
 
         <td width="80" style="padding:10px 12px;border-top:1px solid #1e3a5f;font-size:12px;color:#e2e8f0;font-family:'Courier New',monospace;text-align:center;white-space:nowrap;min-width:80px">${escapeHtml(formatDuration(durationMs))}</td>
 
-        <td width="300" style="padding:10px 12px;border-top:1px solid #1e3a5f;font-size:12px;color:#cbd5e1;font-family:Arial,sans-serif;white-space:nowrap;min-width:300px">${escapeHtml(reason)}</td>
+        <td width="300" style="padding:10px 12px;border-top:1px solid #1e3a5f;font-size:12px;color:#cbd5e1;font-family:Arial,sans-serif;white-space:nowrap;min-width:300px">${escapeHtml(detail)}</td>
       </tr>`
   }).join('')
 
-  /*
-    Regla funcional del banner:
-    - success, running y pending se consideran correctos.
-    - warning, error y failed se consideran errores del día.
-  */
   const hasErrors = hasIssuesByRows(rows)
 
   const bannerBgColor = hasErrors ? 'DC2626' : '16A34A'
@@ -339,4 +403,7 @@ module.exports = {
   formatDuration,
   computeKpis,
   hasIssuesByRows,
+  getEmailDisplayState,
+  getEmailStateLabel,
+  getEmailStateClass,
 }
