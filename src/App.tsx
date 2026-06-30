@@ -182,22 +182,26 @@ function isNoRunRow(row?: JobRowUi | null) {
   )
 }
 
-function isNokRow(row?: JobRowUi | null) {
-  const state = getDisplayState(row)
-  return state === "WARNING" || state === "ERROR"
-}
-
 function isSuccessRow(row?: JobRowUi | null) {
   return getDisplayState(row) === "SUCCESS"
-}
-
-function isRunningUiRow(row?: JobRowUi | null) {
-  return getDisplayState(row) === "RUNNING"
 }
 
 function isBackupPrRrRow(row?: JobRowUi | null) {
   const name = normalizeNameForUi(row?.jobName || "")
   return name === "backup pr" || name === "backup rr"
+}
+
+function detectIsAs400Job(source: any, fallbackName?: string | null): boolean {
+  const idStr = String(source?.jobId ?? "").toLowerCase()
+  const nameStr = String(source?.jobName ?? source?.name ?? fallbackName ?? "").toLowerCase()
+  const srcStr = String(source?.source ?? source?.type ?? "").toLowerCase()
+
+  if (idStr.startsWith("as400:")) return true
+  if (srcStr.includes("as400")) return true
+  if (/\bbackup\s+(sd|sdb|pr|rr)\b/.test(nameStr)) return true
+  if (/sdb\/tgt/.test(nameStr)) return true
+
+  return false
 }
 
 function normalizeB2Row(row: JobRowUi): JobRowUi {
@@ -302,7 +306,7 @@ export default function App() {
   const [authGateOpen, setAuthGateOpen] = useState(false)
 
   const [dbJobs, setDbJobs] = useState<string[]>([])
-  const [logModalData, setLogModalData] = useState<{ jobName: string; content: string | null } | null>(null)
+  const [logModalData, setLogModalData] = useState<{ jobName: string; content: string | null; isAs400?: boolean } | null>(null)
   const [versionModalOpen, setVersionModalOpen] = useState(false)
 
   useEffect(() => {
@@ -360,6 +364,45 @@ export default function App() {
       setLoading(false)
     }
   }, [tab])
+
+  async function reloadJobsDirectory() {
+    try {
+      const res = await api().listJobs()
+
+      if (res?.ok && Array.isArray(res.jobs)) {
+        setDbJobs(
+          res.jobs
+            .map((x: any) => {
+              if (typeof x === "string") return x
+              return x?.jobName || x?.name || x?.title || ""
+            })
+            .filter(Boolean)
+        )
+      }
+    } catch {
+      // Si falla listJobs, intentamos refrescar estado igualmente.
+    }
+
+    try {
+      const p = ((await api().refresh()) as RefreshPayload | null) ?? null
+
+      if ((p as any)?.ok) {
+        setRows(normalizeB2Rows(((p as any).rows ?? []) as JobRowUi[]))
+        setFullRows(normalizeB2Rows(((p as any).fullRows ?? []) as JobRowUi[]))
+        setLastRun((p as any).ts ?? null)
+
+        if ((p as any).windowStart) {
+          setWindowStart((p as any).windowStart)
+        }
+
+        if ((p as any).windowEnd) {
+          setWindowEnd((p as any).windowEnd)
+        }
+      }
+    } catch {
+      // No rompemos la navegación si el refresh falla puntualmente.
+    }
+  }
 
   useEffect(() => {
     if (configPanelOpen || editingJobId || emailModal || logModalData) return
@@ -500,6 +543,71 @@ export default function App() {
   const titleDay = formatBackupTitleDay(effectiveWindowStart)
   const titleRange = formatBackupWindowRange(effectiveWindowStart, effectiveWindowEnd)
 
+  const isWarningRow = useCallback((r: JobRowUi) => {
+    const status = safeLower((r as any).status || "")
+    const reason = safeLower((r as any).reason || "")
+    const detail = safeLower((r as any).detail || "")
+
+    return (
+      status === "warning" ||
+      status === "warn" ||
+      status.includes("warning") ||
+      status.includes("warn") ||
+      status.includes("aviso") ||
+      reason.includes("warning") ||
+      reason.includes("warn") ||
+      reason.includes("aviso") ||
+      detail.includes("warning") ||
+      detail.includes("warn") ||
+      detail.includes("aviso")
+    )
+  }, [])
+
+  const isErrorRow = useCallback((r: JobRowUi) => {
+    const status = safeLower((r as any).status || "")
+    const reason = safeLower((r as any).reason || "")
+    const detail = safeLower((r as any).detail || "")
+
+    const hasWarningSignal =
+      status.includes("warning") ||
+      status.includes("warn") ||
+      status.includes("aviso") ||
+      reason.includes("warning") ||
+      reason.includes("warn") ||
+      reason.includes("aviso") ||
+      detail.includes("warning") ||
+      detail.includes("warn") ||
+      detail.includes("aviso")
+
+    if (hasWarningSignal) return false
+
+    return (
+      status === "error" ||
+      status === "failed" ||
+      status === "failure" ||
+      status.includes("error") ||
+      reason.includes("error") ||
+      detail.includes("error")
+    )
+  }, [])
+
+  const isSuccessRowCb = useCallback((r: JobRowUi) => {
+    const status = safeLower((r as any).status || "")
+    return status === "success" || status === "ok"
+  }, [])
+
+  const isRunningOrPendingRow = useCallback((r: JobRowUi) => {
+    const status = safeLower((r as any).status || "")
+    const globalStatus = safeLower((r as any).globalStatus || "")
+
+    return (
+      status === "running" ||
+      status === "pending" ||
+      globalStatus === "running" ||
+      globalStatus === "pending"
+    )
+  }, [])
+
   const filtered = useMemo(() => {
     let source = dashboardRows
 
@@ -509,7 +617,7 @@ export default function App() {
 
         if (activeCategory === "nok") {
           if (isNoRunRow(r)) return false
-          return isNokRow(r)
+          return isErrorRow(r) || isWarningRow(r)
         }
 
         if (activeCategory === "veeam") {
@@ -549,16 +657,19 @@ export default function App() {
 
         return true
       })
-    } else if (statusFilter !== "all") {
+    }
+
+    if (statusFilter !== "all") {
       source = source.filter((r) => {
         if (isNoRunRow(r)) return false
 
-        if (statusFilter === "running") return isRunningUiRow(r)
-        if (statusFilter === "success") return isSuccessRow(r)
-        if (statusFilter === "warning") return getDisplayState(r) === "WARNING"
-        if (statusFilter === "failed") return getDisplayState(r) === "ERROR"
+        if (statusFilter === "success") return isSuccessRowCb(r)
+        if (statusFilter === "warning") return isWarningRow(r)
+        if (statusFilter === "error") return isErrorRow(r)
+        if (statusFilter === "failed") return isErrorRow(r)
+        if (statusFilter === "running") return isRunningOrPendingRow(r)
 
-        return getDisplayStateLower(r) === String(statusFilter).toLowerCase()
+        return true
       })
     }
 
@@ -594,7 +705,18 @@ export default function App() {
 
       return va < vb ? -1 * dir : va > vb ? 1 * dir : 0
     })
-  }, [dashboardRows, filter, statusFilter, sortKey, sortDir, activeCategory])
+  }, [
+    dashboardRows,
+    filter,
+    statusFilter,
+    sortKey,
+    sortDir,
+    activeCategory,
+    isErrorRow,
+    isWarningRow,
+    isSuccessRowCb,
+    isRunningOrPendingRow,
+  ])
 
   const emailPreviewHtml = useMemo(
     () => buildEmailHtml(dashboardRows, kpis, day, range),
@@ -665,45 +787,6 @@ export default function App() {
     await handleManualOverrideSaved(nextCfg)
   }
 
-  async function reloadJobsDirectory() {
-    try {
-      const res = await api().listJobs()
-
-      if (res?.ok && Array.isArray(res.jobs)) {
-        setDbJobs(
-          res.jobs
-            .map((x: any) => {
-              if (typeof x === "string") return x
-              return x?.jobName || x?.name || x?.title || ""
-            })
-            .filter(Boolean)
-        )
-      }
-    } catch {
-      // Si falla listJobs, intentamos refrescar estado igualmente.
-    }
-
-    try {
-      const p = ((await api().refresh()) as RefreshPayload | null) ?? null
-
-      if ((p as any)?.ok) {
-        setRows(normalizeB2Rows(((p as any).rows ?? []) as JobRowUi[]))
-        setFullRows(normalizeB2Rows(((p as any).fullRows ?? []) as JobRowUi[]))
-        setLastRun((p as any).ts ?? null)
-
-        if ((p as any).windowStart) {
-          setWindowStart((p as any).windowStart)
-        }
-
-        if ((p as any).windowEnd) {
-          setWindowEnd((p as any).windowEnd)
-        }
-      }
-    } catch {
-      // No rompemos la navegación si el refresh falla puntualmente.
-    }
-  }
-
   async function loadExecutions(jobName: string | null) {
     setExecutionsError(null)
     setExecutionsLoading(true)
@@ -743,9 +826,18 @@ export default function App() {
   }, [tab, selectedJobName, allJobNames.length])
 
   async function openLogModal(jobName: string) {
+    // Detección inicial por nombre (por si getJobExecutions tarda o falla)
+    const rowFromMemory: any =
+      fullRows.find((r) => r.jobName === jobName) ??
+      rows.find((r) => r.jobName === jobName) ??
+      null
+
+    const initialIsAs400 = detectIsAs400Job(rowFromMemory, jobName)
+
     setLogModalData({
       jobName,
       content: "Cargando log...",
+      isAs400: initialIsAs400,
     })
 
     try {
@@ -765,14 +857,18 @@ export default function App() {
         execution?.bodyPreview ??
         null
 
+      const finalIsAs400 = detectIsAs400Job(execution ?? rowFromMemory, jobName)
+
       setLogModalData({
         jobName,
         content,
+        isAs400: finalIsAs400,
       })
     } catch {
       setLogModalData({
         jobName,
         content: null,
+        isAs400: initialIsAs400,
       })
     }
   }
@@ -879,8 +975,8 @@ export default function App() {
                   label="Errores"
                   value={kpis.failed}
                   accentColor="#ef4444"
-                  active={statusFilter === "failed"}
-                  onClick={() => handleDashboardKpiClick("failed")}
+                  active={statusFilter === "error"}
+                  onClick={() => handleDashboardKpiClick("error")}
                 />
 
                 <Kpi
@@ -1087,7 +1183,7 @@ export default function App() {
               onClick={(e) => e.stopPropagation()}
             >
               <div className="email-modal-header">
-                <h2>LOG BACKUP - {String(logModalData?.jobName || "Desconocido")}</h2>
+                <h2>{logModalData?.isAs400 ? "LOG AS/400" : "LOG BACKUP"} - {String(logModalData?.jobName || "Desconocido")}</h2>
 
                 <button
                   className="email-modal-close"
