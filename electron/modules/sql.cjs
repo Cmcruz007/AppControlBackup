@@ -138,13 +138,18 @@ async function sqlGetSessionsInRange(sqlCfg, inicio, fin) {
     bjs.processed_size,
     bjs.total_size,
     CASE
-      WHEN TRY_CONVERT(decimal(20,2), bjs.total_size) > 0
-      THEN CAST(ROUND(
-        TRY_CONVERT(decimal(20,2), bjs.processed_size) * 100.0
-        / TRY_CONVERT(decimal(20,2), bjs.total_size), 0
-      ) AS int)
-      ELSE NULL
-    END AS progressPct,
+  WHEN TRY_CONVERT(decimal(20,2), bjs.total_size) > 0
+  THEN CAST(ROUND(
+    TRY_CONVERT(decimal(20,2), bjs.processed_size) * 100.0
+    / TRY_CONVERT(decimal(20,2), bjs.total_size), 0
+  ) AS int)
+  WHEN TRY_CONVERT(decimal(20,2), bjs.total_objects) > 0
+  THEN CAST(ROUND(
+    TRY_CONVERT(decimal(20,2), bjs.processed_objects) * 100.0
+    / TRY_CONVERT(decimal(20,2), bjs.total_objects), 0
+  ) AS int)
+  ELSE NULL
+END AS progressPct,
     CASE
       WHEN prev.prev_duration_sec IS NULL OR prev.prev_duration_sec = 0 OR curr.curr_duration_sec IS NULL THEN 'same'
       WHEN (curr.curr_duration_sec - prev.prev_duration_sec) * 1.0 / prev.prev_duration_sec > 0.2 THEN 'up'

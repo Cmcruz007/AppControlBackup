@@ -1,5 +1,28 @@
 # Changelog
 
+
+## [5.1.0] - 2026-06-30
+
+### ✨ Añadido
+
+- B-2.2: Porcentaje real de progreso en jobs SQL/Veeam.
+  - Cuando Veeam expone `processed_size / total_size`, el detalle muestra `En ejecución (xx%)`.
+  - Cuando aún no hay tamaño reportado, el detalle queda como `En ejecución`.
+
+### 🔧 Interno
+
+- `electron/modules/sql.cjs`: cálculo de `progressPct` ya consolidado en query principal.
+- `electron/modules/engine.cjs`:
+  - `pct` se calcula al inicio de `buildRow`.
+  - Se propaga `progress` y `progressPct` al row final.
+- Sin cambios en `server.js` para B-2.2 (ya soportaba `progress` desde v5.0.0).
+- Sin cambios en frontend ni en correo (consumen `detail` ya enriquecido).
+
+### ✅ Cierres
+
+- Pendiente menor de v5.0.0 sobre porcentaje queda cerrado
+
+
 ## [5.0.0] - 2026-06-29
 
 ### ✨ Añadido / Mejorado

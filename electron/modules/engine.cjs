@@ -25,7 +25,13 @@ function buildRow(s, emails, ahora, criticalityByJob) {
   const email = relevantEmails[0]
   const source = email ? 'both' : 'sql'
 
- let status = 'running', reason = 'En ejecucion'
+  // B-2.2: porcentaje real propagado siempre que SQL lo exponga.
+  const pct = Number.isFinite(Number(s.progressPct))
+    ? Math.max(0, Math.min(100, Number(s.progressPct)))
+    : null
+
+  let status = 'running'
+  let reason = 'En ejecucion'
 
   const rawEnd = email?.receivedDateTime || s.end_time || s.endtime || s.lastRun
   let puntoFinal = rawEnd ? new Date(rawEnd) : null
@@ -49,10 +55,6 @@ function buildRow(s, emails, ahora, criticalityByJob) {
       reason = 'Backup continuo (Correcto)'
     } else {
       status = 'running'
-
-      const pct = Number.isFinite(Number(s.progressPct))
-        ? Math.max(0, Math.min(100, Number(s.progressPct)))
-        : null
 
       if (jobName.toLowerCase().includes('backup configuration job')) {
         reason = pct !== null
@@ -86,15 +88,25 @@ function buildRow(s, emails, ahora, criticalityByJob) {
 
   return {
     jobId: String(s.job_id || s.id || 'unknown') + '-' + start.getTime(),
-    jobName, nextRun: s.creation_time || s.creationtime || null,
-    lastRun: s.end_time || s.endtime || null, lastResult: s.result ?? null,
-    status, reason, source,
+    jobName,
+    nextRun: s.creation_time || s.creationtime || null,
+    lastRun: s.end_time || s.endtime || null,
+    lastResult: s.result ?? null,
+    status,
+    reason,
+    source,
     durationMs: durationMs !== null && durationMs >= 0 ? durationMs : null,
-    durationTrend: null, startTimeDisplay: fStart, endTimeDisplay: fEnd, duration: fDur,
+    durationTrend: null,
+    startTimeDisplay: fStart,
+    endTimeDisplay: fEnd,
+    duration: fDur,
     relaunched: false,
+    progress: pct,
+    progressPct: pct,
     email: email ? { subject: email.subject ?? '', date: email.receivedDateTime ?? null } : null,
     allEmails: relevantEmails.map((e) => ({
-      subject: e?.subject ?? '', date: e?.receivedDateTime ?? null,
+      subject: e?.subject ?? '',
+      date: e?.receivedDateTime ?? null,
       status: String(e?.bodyPreview || '').toLowerCase().includes('success') ? 'success' : 'failed',
     })),
     criticality,
@@ -143,12 +155,10 @@ function applyManualOverride(row, overrides, ahora) {
   return { ...row, ...(manualStatus ? { status: manualStatus } : {}), ...(ov.comment ? { reason: String(ov.comment) } : {}) }
 }
 
-
 function collapseCopyDuplicates(rows) {
   const safeRows = Array.isArray(rows) ? rows : []
   if (safeRows.length === 0) return safeRows
 
-  // Indexamos parents (sin '\') y agrupamos hijos (con '\') por base
   const parentByName = new Map()
   const childrenByBase = new Map()
 
@@ -168,8 +178,6 @@ function collapseCopyDuplicates(rows) {
 
   const toRemove = new Set()
 
-  // Si hay child(s) para un parent, nos quedamos con el child (nombre largo)
-  // y eliminamos el parent. Esto refleja la sesión real de Veeam.
   for (const [base, children] of childrenByBase) {
     const parent = parentByName.get(base)
     if (parent && children.length > 0) {
