@@ -1,22 +1,30 @@
 // src/utils/api.ts — Dual: Electron IPC ↔ Express fetch
 import type { Api } from "../types/ui"
+import { getEntraAccessToken } from "../auth/msalConfig"
 
 // Detectar si estamos en Electron (window.api existe via preload.cjs)
 const isElectron = !!(window as any).api
 
 // ─── Gestión de token de autenticación ────────────────────────────────────
 // Prioridad:
-// 1. localStorage (lo pone el usuario desde la UI de TokenGate)
-// 2. Variable de build (legacy)
+// 1. Token de Entra (idToken/accessToken obtenido por MSAL) si USE_ENTRA=1.
+// 2. localStorage 'bm.authToken' (TokenGate / legacy / fallback).
+// 3. Variable de build VITE_BM_AUTH_TOKEN (legacy).
 const LS_KEY = 'bm.authToken'
 
-function getAuthToken(): string {
+// Flag para activar/desactivar Entra ID.
+// - "0" (default) = Token clásico.
+// - "1" = Entra ID (usa MSAL access token).
+const USE_ENTRA = ((import.meta as any).env?.VITE_BM_USE_ENTRA ?? "0") === "1"
+
+function getLocalToken(): string {
   try {
     const fromLs = window.localStorage.getItem(LS_KEY)
     if (fromLs && fromLs.trim()) return fromLs.trim()
   } catch {
     // ignorar acceso a localStorage en SSR / privacidad
   }
+
   const fromEnv = (import.meta as any).env?.VITE_BM_AUTH_TOKEN || ''
   return fromEnv ? String(fromEnv).trim() : ''
 }
@@ -37,7 +45,7 @@ export function clearAuthToken() {
   setAuthToken('')
 }
 
-// Evento global para que la UI muestre el TokenGate ante 401
+// Evento global para que la UI muestre el TokenGate/EntraGate ante 401
 function notifyUnauthorized() {
   try {
     window.dispatchEvent(new CustomEvent('bm:unauthorized'))
@@ -47,9 +55,29 @@ function notifyUnauthorized() {
 }
 
 // ─── Helpers para modo Express ────────────────────────────────────────────
-function headers(): Record<string, string> {
+async function getBearerToken(): Promise<string> {
+  // 1) Si USE_ENTRA está activo, intentar token MSAL.
+  if (USE_ENTRA) {
+    try {
+      const entraToken = await getEntraAccessToken()
+      if (entraToken && entraToken.trim()) return entraToken.trim()
+    } catch {
+      // continuar al fallback (por ejemplo, si MSAL aún no inicializado)
+    }
+
+    // 2) Si Entra está activo pero no hay token todavía, NO caemos al token
+    //    clásico automáticamente. Evita usar un bm.authToken viejo cuando
+    //    lo que se espera es login con Entra.
+    return ""
+  }
+
+  // 3) Modo legacy: token clásico (localStorage o env).
+  return getLocalToken()
+}
+
+async function headers(): Promise<Record<string, string>> {
   const h: Record<string, string> = { 'Content-Type': 'application/json' }
-  const token = getAuthToken()
+  const token = await getBearerToken()
   if (token) h['Authorization'] = `Bearer ${token}`
   return h
 }
@@ -59,6 +87,7 @@ async function handleResponse(res: Response) {
     notifyUnauthorized()
     return { ok: false, error: 'No autorizado' }
   }
+
   try {
     return await res.json()
   } catch {
@@ -67,14 +96,14 @@ async function handleResponse(res: Response) {
 }
 
 async function get(url: string) {
-  const res = await fetch(url, { headers: headers() })
+  const res = await fetch(url, { headers: await headers() })
   return handleResponse(res)
 }
 
 async function post(url: string, body?: any) {
   const res = await fetch(url, {
     method: 'POST',
-    headers: headers(),
+    headers: await headers(),
     body: body !== undefined ? JSON.stringify(body) : undefined,
   })
   return handleResponse(res)
