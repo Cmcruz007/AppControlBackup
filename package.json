@@ -11,6 +11,7 @@
     "@azure/msal-browser": "^5.15.0",
     "@azure/msal-react": "^5.5.0",
     "express": "^5.2.1",
+    "https-proxy-agent": "^9.1.0",
     "jsonwebtoken": "^9.0.3",
     "jwks-rsa": "^4.1.0",
     "marked": "^18.0.5",

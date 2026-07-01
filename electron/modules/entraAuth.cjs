@@ -11,7 +11,10 @@ function getEntraConfig() {
   return {
     tenantId,
     clientId,
-    issuer: `https://login.microsoftonline.com/${tenantId}/v2.0`,
+    issuers: [
+      `https://login.microsoftonline.com/${tenantId}/v2.0`,
+      `https://sts.windows.net/${tenantId}/`,
+    ],
     audiences: [
       `api://${clientId}`,
       clientId,
@@ -21,11 +24,49 @@ function getEntraConfig() {
 }
 
 function extractBearerToken(req) {
-  const header = req.headers.authorization || ''
-
+  const header = (req && req.headers && req.headers.authorization) || ''
   if (!header.startsWith('Bearer ')) return ''
-
   return header.slice(7).trim()
+}
+
+// ─── Cliente JWKS con soporte proxy corporativo ────────────────────────────
+let cachedJwksClient = null
+
+function buildJwksRequestAgent() {
+  const proxyUrl =
+    process.env.HTTPS_PROXY ||
+    process.env.HTTP_PROXY ||
+    process.env.BM_PROXY_URL ||
+    null
+
+  if (!proxyUrl) return null
+
+  try {
+    const { HttpsProxyAgent } = require('https-proxy-agent')
+    return new HttpsProxyAgent(proxyUrl)
+  } catch (err) {
+    console.error('[AUTH] https-proxy-agent no disponible:', err?.message || err)
+    return null
+  }
+}
+
+function getJwksClient(cfg) {
+  if (cachedJwksClient) return cachedJwksClient
+
+  const agent = buildJwksRequestAgent()
+
+  cachedJwksClient = jwksRsa({
+    jwksUri: cfg.jwksUri,
+    cache: true,
+    cacheMaxEntries: 10,
+    cacheMaxAge: 10 * 60 * 1000, // 10 minutos
+    rateLimit: true,
+    jwksRequestsPerMinute: 10,
+    timeout: 15000,
+    requestAgent: agent || undefined,
+  })
+
+  return cachedJwksClient
 }
 
 async function verifyEntraToken(token) {
@@ -35,21 +76,26 @@ async function verifyEntraToken(token) {
     throw new Error('Token Entra ausente')
   }
 
-  const client = jwksRsa({
-    jwksUri: cfg.jwksUri,
-    cache: true,
-    cacheMaxEntries: 10,
-    cacheMaxAge: 10 * 60 * 1000,
-    rateLimit: true,
-    jwksRequestsPerMinute: 10,
-  })
+  const client = getJwksClient(cfg)
 
   function getKey(header, callback) {
-    client.getSigningKey(header.kid, (err, key) => {
-      if (err) return callback(err)
+    if (!header || !header.kid) {
+      return callback(new Error('Token sin kid'))
+    }
 
-      const signingKey = key.getPublicKey()
-      callback(null, signingKey)
+    client.getSigningKey(header.kid, (err, key) => {
+      if (err) {
+        console.error('[AUTH] JWKS getSigningKey error:', err?.code || '', err?.message || err)
+        return callback(err)
+      }
+
+      try {
+        const signingKey = key.getPublicKey()
+        callback(null, signingKey)
+      } catch (e) {
+        console.error('[AUTH] JWKS getPublicKey error:', e?.message || e)
+        callback(e)
+      }
     })
   }
 
@@ -59,11 +105,19 @@ async function verifyEntraToken(token) {
       getKey,
       {
         algorithms: ['RS256'],
-        issuer: cfg.issuer,
+        issuer: cfg.issuers,
         audience: cfg.audiences,
       },
       (err, decoded) => {
         if (err) return reject(err)
+
+        if (!decoded || typeof decoded !== 'object') {
+          return reject(new Error('Token Entra inválido'))
+        }
+
+        if (decoded.tid && decoded.tid !== cfg.tenantId) {
+          return reject(new Error('Token Entra con tenant no autorizado'))
+        }
 
         resolve(decoded)
       }

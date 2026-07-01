@@ -1007,18 +1007,27 @@ async function authMiddleware(req, res, next) {
 
   const queryToken = req.query?.token || ''
 
+  console.log('[AUTH] req.path=', req.path,
+              'hasBearer=', !!bearerToken,
+              'bearerLen=', bearerToken.length)
+
+  // 1) Token clásico
   if (AUTH_TOKEN && (bearerToken === AUTH_TOKEN || queryToken === AUTH_TOKEN)) {
+    console.log('[AUTH] Token clásico OK')
     return next()
   }
 
+  // 2) Entra ID
   try {
     if (bearerToken) {
       const decoded = await verifyEntraToken(bearerToken)
       req.entraUser = decoded
+      console.log('[AUTH] Entra OK upn=', decoded?.upn || decoded?.unique_name)
       return next()
     }
-  } catch {
-    // Si no valida como Entra, cae al 401.
+  } catch (err) {
+    console.error('[AUTH] Entra verify error:',
+      err?.name, '-', err?.message)
   }
 
   return res.status(401).json({
