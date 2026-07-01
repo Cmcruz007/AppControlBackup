@@ -443,7 +443,32 @@ async function getJobExecutionsFromEmailHistory(cfg, rule, jobName, limit = 200,
   const allEmails = await getEmailsInRange(cfg, inicio, fin)
 
   const senderRule = normalizeText(rule?.sender)
-  const subjectRule = normalizeText(rule?.subjectContains || rule?.title || rule?.name || jobName)
+
+  // Detectamos la fuente ANTES de construir subjectRule para poder usarla.
+  const ruleSource = detectRuleSource(rule)
+
+  // Para Barracuda, si no hay subjectContains explícito, deducimos el servicio
+  // (SharePoint / OneDrive / Exchange / Teams) desde el nombre del job.
+  const extractBarracudaService = (name) => {
+    const n = String(name || '').toLowerCase()
+    if (/sharepoint/.test(n)) return 'SharePoint'
+    if (/onedrive/.test(n))   return 'OneDrive'
+    if (/exchange/.test(n))   return 'Exchange'
+    if (/teams/.test(n))      return 'Teams'
+    return null
+  }
+
+  const barracudaService = (ruleSource === 'barracuda')
+    ? extractBarracudaService(jobName)
+    : null
+
+  const subjectRule = normalizeText(
+    rule?.subjectContains ||
+    barracudaService ||
+    rule?.title ||
+    rule?.name ||
+    jobName
+  )
 
   // Escape para regex
   const escapeRegex = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -469,21 +494,16 @@ async function getJobExecutionsFromEmailHistory(cfg, rule, jobName, limit = 200,
         fromAddr.includes(senderRule) ||
         senderRule.includes(fromAddr)
 
-      const isBarracuda =
-        sender.includes('barracuda') ||
-        fromAddr.includes('barracuda')
-
-      const subjectOk =
-        !subjectRegex ||
-        subjectRegex.test(subject) ||
-        (isBarracuda && /backup\s+report/i.test(subject))
+      // Matching estricto: SIEMPRE exige el token del servicio.
+      // Ya no hay fallback laxo tipo (isBarracuda && /backup\s+report/i).
+      const subjectOk = !subjectRegex || subjectRegex.test(subject)
 
       return senderOk && subjectOk
     })
     .sort((a, b) => new Date(b.receivedDateTime).getTime() - new Date(a.receivedDateTime).getTime())
     .slice(0, Number(limit) || 200)
 
-  const ruleSource = detectRuleSource(rule)
+ 
 
   // Procesar en paralelo controlado
   const executions = []
