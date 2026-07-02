@@ -36,6 +36,9 @@ import HistoryTab from "./components/HistoryTab"
 import VersionModal from "./components/VersionModal"
 import { APP_VERSION } from "./version"
 
+// Flag para diferenciar entre modo Entra ID (SSO+MFA) y Token clásico.
+const USE_ENTRA = ((import.meta as any).env?.VITE_BM_USE_ENTRA ?? "0") === "1"
+
 async function handleExportScheduleExcel() {
   try {
     const res = await api().getSchedule30()
@@ -310,6 +313,10 @@ export default function App() {
   const [versionModalOpen, setVersionModalOpen] = useState(false)
 
   useEffect(() => {
+    // Si estamos en modo Entra ID, no usamos TokenGate. La reautenticación
+    // la maneja MSAL automáticamente (getEntraAccessToken -> acquireTokenRedirect).
+    if (USE_ENTRA) return
+
     function handleUnauthorized() {
       setAuthGateOpen(true)
     }
@@ -1219,10 +1226,12 @@ export default function App() {
         )}
       </div>
 
-      <TokenGate
-        open={authGateOpen}
-        onClose={() => setAuthGateOpen(false)}
-      />
+      {!USE_ENTRA && (
+  <TokenGate
+    open={authGateOpen}
+    onClose={() => setAuthGateOpen(false)}
+  />
+)}
     </>
   )
 }
