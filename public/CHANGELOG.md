@@ -1,5 +1,145 @@
 # Changelog
 
+## v6.0.0 — 01/07/2026
+
+### 🔐 Autenticación corporativa (S-2.1 completado)
+
+- **Entra ID SSO + MFA activo en producción**. Login con cuenta corporativa Microsoft 365 y Microsoft Authenticator como segundo factor (política Conditional Access aplicada por el admin del tenant).
+- Nuevo componente **EntraGate** que gestiona el flujo de login/logout con MSAL.
+- **msalConfig.ts** con `PublicClientApplication`, scope `api://{clientId}/access_as_user`, `redirectUri` en modo SPA y cache en `localStorage`.
+- Backend Entra reforzado en `electron/modules/entraAuth.cjs`:
+  - Soporte de **proxy corporativo** (`HttpsProxyAgent`) para llegar a `login.microsoftonline.com` desde la red interna.
+  - Aceptación de **issuers v1 y v2** (`login.microsoftonline.com/{tenant}/v2.0` y `sts.windows.net/{tenant}/`).
+  - Cliente **JWKS cacheado** con TTL 10 min y timeout 15 s.
+  - Validación estricta de tenant (`decoded.tid === cfg.tenantId`).
+  - Logging detallado de errores JWKS y de auth (Token clásico vs Entra).
+- Modo dual mantenido en `server.js`: primero valida `BM_AUTH_TOKEN`, si no coincide cae a `verifyEntraToken`.
+- Flag `VITE_BM_USE_ENTRA` (default `"0"`):
+  - `=1` → Entra ID (SSO+MFA, modo producción actual).
+  - `=0` → Token clásico (fallback de emergencia).
+- **`TokenGate` ocultado automáticamente** cuando `USE_ENTRA=1` para no confundir al usuario.
+- `api.ts` con `getBearerToken()` async: prioriza `getEntraAccessToken()` de MSAL si `USE_ENTRA=1`, con fallback a `localStorage.bm.authToken` si el flag está desactivado.
+- `main.tsx` con `bootstrap()` async que inicializa MSAL y procesa `handleRedirectPromise` antes de renderizar la app.
+
+### 🐛 B-6 · Reglas Barracuda — matching estricto por servicio
+
+- Los 4 jobs Barracuda (SharePoint / OneDrive / Exchange / Teams) mostraban el mismo log por un fallback laxo `(isBarracuda && /backup\s+report/i)` que hacía match con cualquier report Barracuda.
+- Nueva función `extractBarracudaService(jobName)` que deduce el servicio desde el nombre del job.
+- `ruleSource` declarado **antes** de construir `subjectRule` (fix TDZ que causaba `ReferenceError` al abrir el modal de log Barracuda).
+- Matching ahora exige sender Barracuda **y** palabra clave del servicio en el subject.
+- Validado en producción: los 4 jobs muestran su email correcto e independiente.
+
+### 🎨 Modal de log — título dinámico
+
+- El modal mostraba siempre "LOG AS/400" aunque el job fuera Barracuda o VDC.
+- Nueva función `detectIsAs400Job(source, jobName)` que distingue AS400 vía `jobId` (`as400:...`), `source` (`as400`) o patrón en nombre (`Backup SD/SDB/PR/RR`, `SDB/TGT`).
+- Título dinámico: `LOG AS/400 - <job>` para AS400 · `LOG BACKUP - <job>` para Barracuda/VDC.
+- Cadena de fallback para `logContent`: `as400LogContent → logContent → logText → emailLog → bodyContent → body → bodyPreview`.
+- Colores por tipo de log AS400 conservados: SD verde, PR rojo, RR amarillo, SDB/TGT azul.
+
+### 📊 KPIs Errores / Avisos separados
+
+- El botón "Errores" contaba también los avisos (bug reportado).
+- Nuevas funciones `isErrorRow`, `isWarningRow`, `isSuccessRow` y `isRunningOrPendingRow` con lógica excluyente: si detecta señal de warning (`warning`, `warn`, `aviso`) en `status`/`reason`/`detail`, ya no cuenta como error.
+- Filtro NOK y KPI "Errores" excluyen NO-RUN.
+- Filtro `statusFilter` actualizado para usar las nuevas funciones.
+
+### 🧰 Cambios técnicos y de dependencias
+
+- Nueva dependencia: **`https-proxy-agent@^9.1.0`** (necesaria para el proxy en `entraAuth.cjs`).
+- Consolidación PC ↔ DASHBOARD tras la sesión de rebase: resueltos conflictos en `App.tsx` (KPI errores + modal + `reloadJobsDirectory` + `dashboardRows` sin NO-RUN).
+- `main.tsx` en DASHBOARD tenía un `);` duplicado que impedía compilación limpia: corregido y sincronizado.
+- Se eliminó la función auxiliar `isNokRow` (ya no se usa; sustituida por `isErrorRow || isWarningRow`).
+- `logModalData` ahora tipado con campo opcional `isAs400?: boolean`.
+
+
+## [5.1.0] - 2026-06-30
+
+### ✨ Añadido
+
+- B-2.2: Porcentaje real de progreso en jobs SQL/Veeam.
+  - Cuando Veeam expone `processed_size / total_size`, el detalle muestra `En ejecución (xx%)`.
+  - Cuando aún no hay tamaño reportado, el detalle queda como `En ejecución`.
+
+### 🔧 Interno
+
+- `electron/modules/sql.cjs`: cálculo de `progressPct` ya consolidado en query principal.
+- `electron/modules/engine.cjs`:
+  - `pct` se calcula al inicio de `buildRow`.
+  - Se propaga `progress` y `progressPct` al row final.
+- Sin cambios en `server.js` para B-2.2 (ya soportaba `progress` desde v5.0.0).
+- Sin cambios en frontend ni en correo (consumen `detail` ya enriquecido).
+
+### ✅ Cierres
+
+- Pendiente menor de v5.0.0 sobre porcentaje queda cerrado
+
+
+## [5.0.0] - 2026-06-29
+
+### ✨ Añadido / Mejorado
+
+- B-2: Unificación funcional de estados `running` + `pending` como **EN CURSO**.
+- El dashboard deja de mostrar estados técnicos `RUNNING` / `PENDING` al usuario.
+- El estado visible pasa a ser **EN CURSO** para jobs en ejecución o pendientes técnicos.
+- B-2.1: Detalle inteligente por tipo de fuente:
+  - Jobs SQL/Veeam en curso se muestran como **En ejecución**.
+  - Jobs por email/AS400/Barracuda/VDC pendientes se muestran como **Pendiente recepción**.
+  - Jobs `NO-RUN` se muestran como **Sin ejecución** y quedan fuera de KPIs/NOK.
+- El filtro NOK queda restringido a incidencias reales: `WARNING` / `ERROR`.
+- KPIs ajustados para contar **EN CURSO** como `running + pending técnico`.
+- Correo diario alineado con el nuevo modelo de estados:
+  - `RUNNING/PENDING` técnico → **EN CURSO**
+  - `NO-RUN` fuera de KPIs
+  - banner rojo solo con `WARNING` / `ERROR`
+- Export JSON móvil enriquecido con:
+  - `status` global
+  - `raw_status`
+  - `detail`
+
+### 🖥️ UI / Logs
+
+- UI-1 cerrado: iconos de log visibles y operativos para jobs por email:
+  - AS400
+  - Veeam Data Cloud
+  - Barracuda
+- UI-2 cerrado: mejora visual del formato de logs AS400 en el modal **LOG BACKUP**.
+- Colores AS400 aplicados por tipo de job:
+  - `Backup SD` → verde `#00FF00`
+  - `Backup PR` → rojo `#F01818`
+  - `Backup RR` → amarillo `#A0A000`
+  - `Backup SDB/TGT` → azul `#7890F0`
+- UI-3 cerrado: limpieza visual de logs Barracuda/VDC:
+  - eliminado footer comercial de Barracuda
+  - eliminado bloque VDC `Please view your backup logs... / View logs / N`
+- Modal de logs renombrado a **LOG BACKUP**.
+- Validación visual OK en `https://dashboard` tras refresco/caché.
+
+### 🐛 Corregido
+
+- Jobs SQL/Veeam que ya existen en BBDD no muestran ya **Pendiente ejecución**.
+- El detalle para jobs SQL/Veeam pasa a ser **En ejecución** cuando están en curso.
+- El componente `JobTable` deja de pintar estados técnicos y usa etiquetas visibles normalizadas.
+- El correo deja de mostrar `PENDING` / `RUNNING` como texto técnico.
+- Los jobs `NO-RUN` quedan fuera de KPIs y fuera del filtro NOK.
+
+### ⚠️ Pendiente conocido
+
+- Recuperar y mostrar el porcentaje real de progreso en jobs SQL/Veeam cuando Veeam lo exponga en la fila disponible.
+- Actualmente, si no llega porcentaje, el detalle queda como **En ejecución**.
+
+### 🔧 Interno
+
+- Cambios principales en:
+  - `server.js`
+  - `src/App.tsx`
+  - `src/components/JobTable.tsx`
+  - `electron/modules/emailBuilder.cjs`
+  - `electron/modules/graph.cjs`
+- Modelo B-2/B-2.1 consolidado como base para futura versión móvil/PWA.
+- UI-1/UI-2/UI-3 quedan incorporados oficialmente al cierre funcional de v5.0.0.
+
+
 ## v4.0.0 - 2026-06-28
 
 ### Cerrado

@@ -81,9 +81,6 @@ function formatBackupWindowRange(startValue?: string | null, endValue?: string |
 
   if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return ""
 
-  // La ventana del backend es inicio inclusivo / fin exclusivo:
-  // 18:00 del día anterior -> 18:00 del día actual.
-  // En UI se muestra como 18:00 -> 17:59.
   const displayEnd = new Date(end.getTime() - 60 * 1000)
 
   const fmtDate = (d: Date) =>
@@ -132,7 +129,6 @@ function getDisplayState(row?: JobRowUi | null): string {
   if (s === "FAILED" || s === "FAILURE") return "ERROR"
   if (s === "NO_RUN" || s === "NORUN") return "NO-RUN"
 
-  // B-2: PENDING técnico también se visualiza como RUNNING / EN CURSO.
   if (s === "PENDING") return "RUNNING"
 
   return s
@@ -148,10 +144,7 @@ function getStateLabel(row?: JobRowUi | null): string {
   if (state === "SUCCESS") return "SUCCESS"
   if (state === "WARNING") return "WARNING"
   if (state === "ERROR") return "ERROR"
-
-  // B-2
   if (state === "RUNNING") return "EN CURSO"
-
   if (state === "NO-RUN") return "SIN EJECUCIÓN"
 
   return state || "-"
@@ -163,10 +156,7 @@ function getStateClass(row?: JobRowUi | null): string {
   if (state === "SUCCESS") return "success"
   if (state === "WARNING") return "warning"
   if (state === "ERROR") return "error"
-
-  // B-2
   if (state === "RUNNING") return "running"
-
   if (state === "NO-RUN") return "no-run"
 
   return "unknown"
@@ -521,8 +511,6 @@ export default function App() {
     const filtrarJob = (r: JobRowUi) => {
       if (!r.jobName) return true
 
-      // Solo se excluyen los AS400 exactos Backup PR / Backup RR.
-      // No se filtran genéricamente nombres SQL que contengan "pr" o "rr".
       if (isBackupPrRrRow(r)) {
         return false
       }
@@ -1227,11 +1215,11 @@ export default function App() {
       </div>
 
       {!USE_ENTRA && (
-  <TokenGate
-    open={authGateOpen}
-    onClose={() => setAuthGateOpen(false)}
-  />
-)}
+        <TokenGate
+          open={authGateOpen}
+          onClose={() => setAuthGateOpen(false)}
+        />
+      )}
     </>
   )
 }
