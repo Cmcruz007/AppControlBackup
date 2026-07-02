@@ -160,6 +160,59 @@ function isDdvePhysicalChildDuplicate(row) {
   return isDcoChild || isTicChild
 }
 
+function stripTrailingIpFromJobName(name) {
+  return String(name || '')
+    .replace(/\s+-\s+\d{1,3}(?:\.\d{1,3}){3}\s*$/g, '')
+    .trim()
+}
+
+function dedupeVeeamParentChildIpRows(rows) {
+  const list = Array.isArray(rows) ? rows : []
+
+  const originalNames = new Set(
+    list
+      .map((r) => String(r?.name || r?.jobName || r?.JobName || r?.title || '').trim())
+      .filter(Boolean)
+  )
+
+  const result = []
+  const seen = new Set()
+
+  for (const row of list) {
+    const rawName = String(row?.name || row?.jobName || row?.JobName || row?.title || '').trim()
+    const baseName = stripTrailingIpFromJobName(rawName)
+
+    const hasTrailingIp = rawName !== baseName
+
+    // Si existe el job padre sin IP, descartamos la fila hija con IP.
+    // Ejemplo:
+    //   Padre: QRADAR-HCI - VM - MENSUAL - DIA 02
+    //   Hijo : QRADAR-HCI - VM - MENSUAL - DIA 02 - 172.29.5.108
+    if (hasTrailingIp && originalNames.has(baseName)) {
+      continue
+    }
+
+    const key = [
+      baseName.toUpperCase(),
+      String(row?.source || row?.fuente || row?.type || '').toUpperCase(),
+      String(row?.status || row?.estado || '').toUpperCase(),
+    ].join('|')
+
+    if (seen.has(key)) {
+      continue
+    }
+
+    seen.add(key)
+    result.push({
+      ...row,
+      jobName: row?.jobName || row?.name || row?.title || baseName,
+      name: row?.name || row?.jobName || row?.title || baseName,
+    })
+  }
+
+  return result
+}
+
 function filterDashboardRows(rows, windowStartDate) {
   const weekendWindow = isWeekendOperationalWindow(windowStartDate)
 
@@ -299,20 +352,20 @@ function buildSmartDetail(row) {
     return 'Sin ejecución'
   }
 
-// Veeam SQL
-// Si viene de SQL/Veeam, significa que existe sesión en BBDD.
-// Por tanto, running y pending técnico se presentan como ejecución real.
-if (source === 'veeam' || source === 'sql') {
-  if (rawStatus === 'running' || rawStatus === 'pending') {
-    const progress = getProgressValue(row)
+  // Veeam SQL
+  // Si viene de SQL/Veeam, significa que existe sesión en BBDD.
+  // Por tanto, running y pending técnico se presentan como ejecución real.
+  if (source === 'veeam' || source === 'sql') {
+    if (rawStatus === 'running' || rawStatus === 'pending') {
+      const progress = getProgressValue(row)
 
-    if (progress !== null) {
-      return `En ejecución (${progress}%)`
+      if (progress !== null) {
+        return `En ejecución (${progress}%)`
+      }
+
+      return 'En ejecución'
     }
-
-    return 'En ejecución'
   }
-}
 
   // Jobs por email: AS400 / Barracuda / VDC
   if (
@@ -740,7 +793,7 @@ async function buildRefreshPayloadForWindow(cfg, inicio, fin, includeSql = true)
     existingAs400JobNames.add(key)
   })
 
-  const fullRows = [...sqlFullRows, ...vdcRows, ...barraRows, ...as400Rows]
+  const rawFullRows = [...sqlFullRows, ...vdcRows, ...barraRows, ...as400Rows]
     .map(sanitizeRowForFrontend)
     .map(decorateLogAvailability)
     .map(cleanRow)
@@ -761,6 +814,12 @@ async function buildRefreshPayloadForWindow(cfg, inicio, fin, includeSql = true)
 
       return bTime - aTime
     })
+
+  // Dedupe global antes de KPIs/dashboard/email/export.
+  // Evita duplicados tipo:
+  // QRADAR-HCI - VM - MENSUAL - DIA 02
+  // QRADAR-HCI - VM - MENSUAL - DIA 02 - 172.29.5.108
+  const fullRows = dedupeVeeamParentChildIpRows(rawFullRows)
 
   // SOLO para dashboard
   const dashboardRows = filterDashboardRows(fullRows, inicio)
@@ -1008,8 +1067,8 @@ async function authMiddleware(req, res, next) {
   const queryToken = req.query?.token || ''
 
   console.log('[AUTH] req.path=', req.path,
-              'hasBearer=', !!bearerToken,
-              'bearerLen=', bearerToken.length)
+    'hasBearer=', !!bearerToken,
+    'bearerLen=', bearerToken.length)
 
   // 1) Token clásico
   if (AUTH_TOKEN && (bearerToken === AUTH_TOKEN || queryToken === AUTH_TOKEN)) {
