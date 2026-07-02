@@ -54,3 +54,5 @@ logs/
 daily-report-last-sent.txt
 
 .env.production
+
+.env.production
