@@ -1,5 +1,24 @@
 # Changelog
 
+## v6.1.0 — 11/07/2026
+
+### 🐛 Filtros KPI respetan el override manual
+
+- Al pinchar el KPI "Errores", aparecían jobs que el operador había pasado manualmente a otro estado (p.ej. VDC Exchange forzado a RUNNING seguía saliendo en Errores porque el detalle contenía la palabra "error" — "Error throttling de un buzón").
+- Causa: los KPIs contaban con `getDisplayState` (que respeta el override) pero los filtros al pinchar usaban matching de texto sobre `status`/`reason`/`detail`.
+- Solución: `isErrorRow`, `isWarningRow`, `isSuccessRow` e `isRunningOrPendingRow` ahora usan `getDisplayState(r)`, igual que los KPIs. Filtros y conteos 100% consistentes.
+
+### 🐛 Deduplicación Veeam padre/hijo con IP
+
+- Los jobs `QRADAR-HCI - VM - MENSUAL - DIA XX` mostraban también su hijo con IP (`- 172.29.5.108`), duplicando KPIs y filas.
+- Nueva función `stripTrailingIpFromJobName()` y `dedupeVeeamParentChildIpRows()`: si existe el padre sin IP, descarta el hijo con IP; deduplica también por `(baseName, source, status)`.
+- Aplicado antes de calcular KPIs, dashboard, email y export.
+
+### 🧰 Otros
+
+- `.env.production` añadido al `.gitignore` (config local por máquina).
+
+
 ## v6.0.0 — 01/07/2026
 
 ### 🔐 Autenticación corporativa (S-2.1 completado)
