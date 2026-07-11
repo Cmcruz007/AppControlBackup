@@ -538,69 +538,24 @@ export default function App() {
   const titleDay = formatBackupTitleDay(effectiveWindowStart)
   const titleRange = formatBackupWindowRange(effectiveWindowStart, effectiveWindowEnd)
 
+  // Los filtros usan getDisplayState (igual que los KPIs en computeB2Kpis).
+  // Así se respeta SIEMPRE el override manual del operador y evitamos que el
+  // texto del detalle (p.ej. "Error throttling de un buzón") clasifique mal
+  // una fila que el operador ha pasado a otro estado (RUNNING, SUCCESS, etc.).
   const isWarningRow = useCallback((r: JobRowUi) => {
-    const status = safeLower((r as any).status || "")
-    const reason = safeLower((r as any).reason || "")
-    const detail = safeLower((r as any).detail || "")
-
-    return (
-      status === "warning" ||
-      status === "warn" ||
-      status.includes("warning") ||
-      status.includes("warn") ||
-      status.includes("aviso") ||
-      reason.includes("warning") ||
-      reason.includes("warn") ||
-      reason.includes("aviso") ||
-      detail.includes("warning") ||
-      detail.includes("warn") ||
-      detail.includes("aviso")
-    )
+    return getDisplayState(r) === "WARNING"
   }, [])
 
   const isErrorRow = useCallback((r: JobRowUi) => {
-    const status = safeLower((r as any).status || "")
-    const reason = safeLower((r as any).reason || "")
-    const detail = safeLower((r as any).detail || "")
-
-    const hasWarningSignal =
-      status.includes("warning") ||
-      status.includes("warn") ||
-      status.includes("aviso") ||
-      reason.includes("warning") ||
-      reason.includes("warn") ||
-      reason.includes("aviso") ||
-      detail.includes("warning") ||
-      detail.includes("warn") ||
-      detail.includes("aviso")
-
-    if (hasWarningSignal) return false
-
-    return (
-      status === "error" ||
-      status === "failed" ||
-      status === "failure" ||
-      status.includes("error") ||
-      reason.includes("error") ||
-      detail.includes("error")
-    )
+    return getDisplayState(r) === "ERROR"
   }, [])
 
   const isSuccessRowCb = useCallback((r: JobRowUi) => {
-    const status = safeLower((r as any).status || "")
-    return status === "success" || status === "ok"
+    return getDisplayState(r) === "SUCCESS"
   }, [])
 
   const isRunningOrPendingRow = useCallback((r: JobRowUi) => {
-    const status = safeLower((r as any).status || "")
-    const globalStatus = safeLower((r as any).globalStatus || "")
-
-    return (
-      status === "running" ||
-      status === "pending" ||
-      globalStatus === "running" ||
-      globalStatus === "pending"
-    )
+    return getDisplayState(r) === "RUNNING"
   }, [])
 
   const filtered = useMemo(() => {
