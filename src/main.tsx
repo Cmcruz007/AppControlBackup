@@ -5,6 +5,7 @@ import { msalInstance } from "./auth/msalConfig"
 import EntraGate from "./components/EntraGate"
 import App from "./App"
 import "./styles.css"
+import "./mobile.css"
 
 // Flag para activar/desactivar Entra ID.
 // - "0" = Token clásico (BM_AUTH_TOKEN) — modo actual por defecto.

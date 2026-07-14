@@ -994,14 +994,16 @@ export default function App() {
                 </div>
 
                 <div
-                  className="category-tabs"
-                  style={{
-                    display: "flex",
-                    gap: "6px",
-                    width: "100%",
-                    padding: "4px 0",
-                  }}
-                >
+  className="category-filter-bar"
+  style={{
+    display: "flex",
+    gap: "8px",
+    flexWrap: "wrap",
+    alignItems: "center",
+    width: "100%",
+    padding: "4px 0",
+  }}
+>
                   {JOB_CATEGORIES.map((cat) => {
                     const isNok = cat.id === "nok"
                     const isActive = activeCategory === cat.id

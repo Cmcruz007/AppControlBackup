@@ -1,4 +1,4 @@
-import type { JobRow } from "../types/ui"
+﻿import type { JobRow } from "../types/ui"
 import type { SortKey, SortDir } from "../types/ui"
 import { SourceIcon } from "./Icons"
 
@@ -9,7 +9,7 @@ function getDisplayState(row: any): string {
   if (raw === "FAILED" || raw === "FAILURE") return "ERROR"
   if (raw === "NO_RUN" || raw === "NORUN") return "NO-RUN"
 
-  // B-2: pending técnico se muestra como EN CURSO.
+  // B-2: pending tÃ©cnico se muestra como EN CURSO.
   if (raw === "PENDING") return "RUNNING"
 
   return raw
@@ -25,7 +25,7 @@ function getVisibleStatus(row: any): string {
   // B-2
   if (state === "RUNNING") return "EN CURSO"
 
-  if (state === "NO-RUN") return "SIN EJECUCIÓN"
+  if (state === "NO-RUN") return "SIN EJECUCIÃ“N"
 
   return state || "-"
 }
@@ -96,33 +96,36 @@ export default function JobTable({
     )
   }
 
-  return (
-    <table className="compact-table">
+
+return (
+  <>
+    <table className="compact-table desktop-job-table">
+
       <thead>
         <tr>
           <th className="sortable" onClick={() => onSort("jobName")}>
-            Job {sortKey === "jobName" ? (sortDir === "asc" ? "▲" : "▼") : ""}
+            Job {sortKey === "jobName" ? (sortDir === "asc" ? "â–²" : "â–¼") : ""}
           </th>
 
           <th className="sortable" onClick={() => onSort("status")}>
-            Estado {sortKey === "status" ? (sortDir === "asc" ? "▲" : "▼") : ""}
+            Estado {sortKey === "status" ? (sortDir === "asc" ? "â–²" : "â–¼") : ""}
           </th>
 
           <th className="sortable" onClick={() => onSort("source")}>
-            Fuente {sortKey === "source" ? (sortDir === "asc" ? "▲" : "▼") : ""}
+            Fuente {sortKey === "source" ? (sortDir === "asc" ? "â–²" : "â–¼") : ""}
           </th>
 
           <th className="sortable" onClick={() => onSort("nextRun")}>
-            Inicio {sortKey === "nextRun" ? (sortDir === "asc" ? "▲" : "▼") : ""}
+            Inicio {sortKey === "nextRun" ? (sortDir === "asc" ? "â–²" : "â–¼") : ""}
           </th>
 
-          <th>Duración</th>
+          <th>DuraciÃ³n</th>
 
           <th className="sortable" onClick={() => onSort("reason")}>
-            Detalle {sortKey === "reason" ? (sortDir === "asc" ? "▲" : "▼") : ""}
+            Detalle {sortKey === "reason" ? (sortDir === "asc" ? "â–²" : "â–¼") : ""}
           </th>
 
-          {!readOnly && <th>Acción</th>}
+          {!readOnly && <th>AcciÃ³n</th>}
         </tr>
       </thead>
 
@@ -195,7 +198,7 @@ export default function JobTable({
                       }}
                       onClick={() => onOpenLog?.(r.jobName)}
                     >
-                      📋
+                      ðŸ“‹
                     </button>
                   )}
                 </div>
@@ -214,7 +217,7 @@ export default function JobTable({
               <td className="tabular" style={{ width: 180, minWidth: 180, whiteSpace: "nowrap" }}>
                 {(() => {
                   const val = r.nextRun ?? r.startTime
-                  if (!val) return "—"
+                  if (!val) return "â€”"
 
                   const d = new Date(val)
 
@@ -232,29 +235,29 @@ export default function JobTable({
 
               <td className="tabular">
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <span style={{ minWidth: "45px" }}>{r.duration ?? "—"}</span>
+                  <span style={{ minWidth: "45px" }}>{r.duration ?? "â€”"}</span>
 
                   {r.durationTrend === "up" && (
                     <span
-                      title="Tardó >20% más que el anterior"
+                      title="TardÃ³ >20% mÃ¡s que el anterior"
                       style={{ color: "#ef4444", fontSize: 16, cursor: "help" }}
                     >
-                      ▲
+                      â–²
                     </span>
                   )}
 
                   {r.durationTrend === "down" && (
                     <span
-                      title="Tardó >20% menos que el anterior"
+                      title="TardÃ³ >20% menos que el anterior"
                       style={{ color: "#22c55e", fontSize: 16, cursor: "help" }}
                     >
-                      ▼
+                      â–¼
                     </span>
                   )}
 
                   {r.durationTrend === "same" && (
                     <span
-                      title="Duración estable (<20%)"
+                      title="DuraciÃ³n estable (<20%)"
                       style={{ color: "#f59e0b", fontSize: 18, fontWeight: "bold", cursor: "help" }}
                     >
                       =
@@ -287,7 +290,101 @@ export default function JobTable({
             </tr>
           )
         })}
-      </tbody>
+    </tbody>
     </table>
-  )
+
+    <div className="mobile-job-cards">
+      {rows.map((r) => {
+        const displayStatus = getVisibleStatus(r)
+        const statusClass = getStatusClass(r)
+        const displayReason = getVisibleDetail(r)
+
+        const val = r.nextRun ?? r.startTime
+        let startText = "â€”"
+
+        if (val) {
+          const d = new Date(val)
+
+          startText = isNaN(d.getTime())
+            ? String(val)
+            : d.toLocaleString("es-ES", {
+                day: "2-digit",
+                month: "2-digit",
+                year: "numeric",
+                hour: "2-digit",
+                minute: "2-digit",
+              })
+        }
+
+        return (
+          <article key={r.jobId} className={`mobile-job-card row-${statusClass}`}>
+            <div className="mobile-job-card-header">
+              <div className="mobile-job-title-wrap">
+                <span
+                  title={`Criticidad: ${r.criticality ?? "low"}`}
+                  className={`mobile-criticality mobile-criticality-${r.criticality ?? "low"}`}
+                />
+
+                <div className="mobile-job-title">
+                  {r.jobName}
+                </div>
+              </div>
+
+              <span className={`badge ${statusClass}`}>
+                {displayStatus}
+              </span>
+            </div>
+
+            <div className="mobile-job-meta">
+              <div className="mobile-job-meta-item">
+                <span className="mobile-job-meta-label">Fuente</span>
+                <span className="mobile-job-meta-value">
+                  <SourceIcon source={r.source} />
+                </span>
+              </div>
+
+              <div className="mobile-job-meta-item">
+                <span className="mobile-job-meta-label">Inicio</span>
+                <span className="mobile-job-meta-value">{startText}</span>
+              </div>
+
+              <div className="mobile-job-meta-item">
+                <span className="mobile-job-meta-label">DuraciÃ³n</span>
+                <span className="mobile-job-meta-value">{r.duration ?? "â€”"}</span>
+              </div>
+            </div>
+
+            {displayReason && (
+              <div className="mobile-job-detail">
+                {displayReason}
+              </div>
+            )}
+
+            {!readOnly && (
+              <div className="mobile-job-actions">
+                {canShowBackupLogIcon(r) && (
+                  <button
+                    type="button"
+                    className="secondary mobile-job-action-btn"
+                    onClick={() => onOpenLog?.(r.jobName)}
+                  >
+                    Ver log
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  className="secondary mobile-job-action-btn"
+                  onClick={() => onEditComment?.(r.jobId)}
+                >
+                  Editar
+                </button>
+              </div>
+            )}
+          </article>
+        )
+      })}
+    </div>
+  </>
+)
 }

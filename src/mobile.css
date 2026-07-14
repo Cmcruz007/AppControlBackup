@@ -1,0 +1,272 @@
+/* =========================================================
+   M-1 Mobile Foundation - BackupMonitor Mobile v7
+   ========================================================= */
+
+.mobile-job-cards {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  html,
+  body,
+  #root {
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+
+  .app,
+  .content {
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+
+  .kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    margin-bottom: 14px;
+  }
+
+  .kpi-card {
+    min-width: 0;
+    padding: 14px 12px;
+    border-radius: 14px;
+  }
+
+  .kpi-card .label {
+    font-size: 12px;
+    line-height: 1.2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .kpi-card .value {
+    font-size: 26px;
+    line-height: 1.1;
+  }
+
+  .kpis .kpi-card:nth-child(5) {
+    grid-column: 1 / -1;
+  }
+
+  .desktop-job-table {
+    display: none;
+  }
+
+  .mobile-job-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .mobile-job-card {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 14px;
+    overflow: hidden;
+    position: relative;
+    box-shadow: 0 10px 26px rgba(0, 0, 0, .18);
+  }
+
+  .mobile-job-card::before {
+    content: "";
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 4px;
+    background: var(--border);
+  }
+
+  .mobile-job-card.row-success::before {
+    background: #22c55e;
+  }
+
+  .mobile-job-card.row-warning::before {
+    background: #f59e0b;
+  }
+
+  .mobile-job-card.row-failed::before {
+    background: #ef4444;
+  }
+
+  .mobile-job-card.row-running::before {
+    background: #60a5fa;
+  }
+
+  .mobile-job-card.row-no-run::before {
+    background: #64748b;
+  }
+
+  .mobile-job-card-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+
+  .mobile-job-title-wrap {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    min-width: 0;
+    flex: 1;
+  }
+
+  .mobile-criticality {
+    width: 10px;
+    height: 10px;
+    border-radius: 3px;
+    flex: 0 0 auto;
+    margin-top: 5px;
+    box-shadow: 0 0 0 1px rgba(255,255,255,.08) inset;
+  }
+
+  .mobile-criticality-high {
+    background: #ef4444;
+  }
+
+  .mobile-criticality-medium {
+    background: #f59e0b;
+  }
+
+  .mobile-criticality-low {
+    background: #22c55e;
+  }
+
+  .mobile-job-title {
+    color: var(--text);
+    font-size: 14px;
+    font-weight: 800;
+    line-height: 1.25;
+    word-break: break-word;
+  }
+
+  .mobile-job-meta {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+
+  .mobile-job-meta-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 10px;
+    border-radius: 10px;
+    background: rgba(15, 23, 42, .35);
+    border: 1px solid rgba(148, 163, 184, .12);
+  }
+
+  .mobile-job-meta-label {
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 700;
+  }
+
+  .mobile-job-meta-value {
+    color: var(--text);
+    font-size: 12px;
+    font-weight: 700;
+    text-align: right;
+  }
+
+  .mobile-job-detail {
+    margin-top: 10px;
+    padding: 10px;
+    border-radius: 10px;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.35;
+    background: rgba(2, 6, 23, .28);
+    border: 1px solid rgba(148, 163, 184, .12);
+  }
+
+  .mobile-job-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+  }
+
+  .mobile-job-action-btn {
+    flex: 1;
+    padding: 9px 10px;
+    font-size: 12px;
+    border-radius: 10px;
+  }
+
+  .tabs {
+    gap: 8px;
+    overflow-x: hidden;
+    flex-wrap: wrap;
+  }
+
+  .tabs .tab:nth-child(2) {
+    display: none;
+  }
+
+  .window-title {
+    width: 100%;
+    order: 10;
+    margin-top: 8px;
+    padding: 10px 12px;
+    border-radius: 14px;
+    background: rgba(15, 23, 42, .35);
+  }
+
+  .window-title-main {
+    display: block;
+    font-size: 22px;
+    line-height: 1.05;
+    letter-spacing: .5px;
+  }
+
+  .window-title-range {
+    display: block;
+    margin-top: 6px;
+    font-size: 11px;
+    line-height: 1.25;
+  }
+
+  .toolbar {
+    width: 100%;
+  }
+
+  .toolbar > div:first-child {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .search-input {
+    width: 100%;
+    min-width: 0;
+    flex: 1 1 100%;
+  }
+
+  .toolbar button {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .category-filter-bar {
+    display: grid !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    gap: 8px !important;
+    width: 100% !important;
+    overflow: hidden;
+  }
+
+  .category-filter-bar button {
+    width: 100% !important;
+    min-width: 0 !important;
+    margin-left: 0 !important;
+    padding: 8px 6px !important;
+    border-radius: 10px !important;
+    font-size: 11px !important;
+    line-height: 1.05 !important;
+    white-space: normal !important;
+    text-align: center !important;
+  }
+}
