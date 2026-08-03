@@ -9,7 +9,7 @@ function getDisplayState(row: any): string {
   if (raw === "FAILED" || raw === "FAILURE") return "ERROR"
   if (raw === "NO_RUN" || raw === "NORUN") return "NO-RUN"
 
-  // B-2: pending tÃ©cnico se muestra como EN CURSO.
+  // B-2: pending técnico se muestra como EN CURSO.
   if (raw === "PENDING") return "RUNNING"
 
   return raw
@@ -25,7 +25,7 @@ function getVisibleStatus(row: any): string {
   // B-2
   if (state === "RUNNING") return "EN CURSO"
 
-  if (state === "NO-RUN") return "SIN EJECUCIÃ“N"
+  if (state === "NO-RUN") return "SIN EJECUCIÓN"
 
   return state || "-"
 }
@@ -104,28 +104,28 @@ return (
       <thead>
         <tr>
           <th className="sortable" onClick={() => onSort("jobName")}>
-            Job {sortKey === "jobName" ? (sortDir === "asc" ? "â–²" : "â–¼") : ""}
+            Job {sortKey === "jobName" ? (sortDir === "asc" ? "▲" : "▼") : ""}
           </th>
 
           <th className="sortable" onClick={() => onSort("status")}>
-            Estado {sortKey === "status" ? (sortDir === "asc" ? "â–²" : "â–¼") : ""}
+            Estado {sortKey === "status" ? (sortDir === "asc" ? "▲" : "▼") : ""}
           </th>
 
           <th className="sortable" onClick={() => onSort("source")}>
-            Fuente {sortKey === "source" ? (sortDir === "asc" ? "â–²" : "â–¼") : ""}
+            Fuente {sortKey === "source" ? (sortDir === "asc" ? "▲" : "▼") : ""}
           </th>
 
           <th className="sortable" onClick={() => onSort("nextRun")}>
-            Inicio {sortKey === "nextRun" ? (sortDir === "asc" ? "â–²" : "â–¼") : ""}
+            Inicio {sortKey === "nextRun" ? (sortDir === "asc" ? "▲" : "▼") : ""}
           </th>
 
-          <th>DuraciÃ³n</th>
+          <th>Duración</th>
 
           <th className="sortable" onClick={() => onSort("reason")}>
-            Detalle {sortKey === "reason" ? (sortDir === "asc" ? "â–²" : "â–¼") : ""}
+            Detalle {sortKey === "reason" ? (sortDir === "asc" ? "▲" : "▼") : ""}
           </th>
 
-          {!readOnly && <th>AcciÃ³n</th>}
+          {!readOnly && <th>Acción</th>}
         </tr>
       </thead>
 
@@ -198,7 +198,7 @@ return (
                       }}
                       onClick={() => onOpenLog?.(r.jobName)}
                     >
-                      ðŸ“‹
+                      📋
                     </button>
                   )}
                 </div>
@@ -217,7 +217,7 @@ return (
               <td className="tabular" style={{ width: 180, minWidth: 180, whiteSpace: "nowrap" }}>
                 {(() => {
                   const val = r.nextRun ?? r.startTime
-                  if (!val) return "â€”"
+                  if (!val) return "—"
 
                   const d = new Date(val)
 
@@ -235,29 +235,29 @@ return (
 
               <td className="tabular">
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <span style={{ minWidth: "45px" }}>{r.duration ?? "â€”"}</span>
+                  <span style={{ minWidth: "45px" }}>{r.duration ?? "—"}</span>
 
                   {r.durationTrend === "up" && (
                     <span
-                      title="TardÃ³ >20% mÃ¡s que el anterior"
+                      title="Tardó >20% más que el anterior"
                       style={{ color: "#ef4444", fontSize: 16, cursor: "help" }}
                     >
-                      â–²
+                      ▲
                     </span>
                   )}
 
                   {r.durationTrend === "down" && (
                     <span
-                      title="TardÃ³ >20% menos que el anterior"
+                      title="Tardó >20% menos que el anterior"
                       style={{ color: "#22c55e", fontSize: 16, cursor: "help" }}
                     >
-                      â–¼
+                      ▼
                     </span>
                   )}
 
                   {r.durationTrend === "same" && (
                     <span
-                      title="DuraciÃ³n estable (<20%)"
+                      title="Duración estable (<20%)"
                       style={{ color: "#f59e0b", fontSize: 18, fontWeight: "bold", cursor: "help" }}
                     >
                       =
@@ -300,7 +300,7 @@ return (
         const displayReason = getVisibleDetail(r)
 
         const val = r.nextRun ?? r.startTime
-        let startText = "â€”"
+        let startText = "—"
 
         if (val) {
           const d = new Date(val)
@@ -349,8 +349,8 @@ return (
               </div>
 
               <div className="mobile-job-meta-item">
-                <span className="mobile-job-meta-label">DuraciÃ³n</span>
-                <span className="mobile-job-meta-value">{r.duration ?? "â€”"}</span>
+                <span className="mobile-job-meta-label">Duración</span>
+                <span className="mobile-job-meta-value">{r.duration ?? "—"}</span>
               </div>
             </div>
 
