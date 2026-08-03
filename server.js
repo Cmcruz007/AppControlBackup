@@ -138,7 +138,9 @@ function isAs400PrRrWeekendExcluded(row) {
 
   return (
     name === 'BACKUP PR' ||
-    name === 'BACKUP RR'
+    name === 'BACKUP RR' ||
+    name === 'BACKUP AS400 PR' ||
+    name === 'BACKUP AS400 RR'
   )
 }
 
