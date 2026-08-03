@@ -22,7 +22,7 @@ export function SqlSourceIcon({ size = 16 }: { size?: number }) {
   )
 }
 
-export function SourceIcon({ source }: { source?: "email" | "sql" | "both" | null }) {
+export function SourceIcon({ source }: { source?: "email" | "sql" | "both" | "vdc" | "barracuda" | "as400" | string | null }) {
   const sqlIcon = (
     <span title="SQL" style={{ color: "#ffffff", display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
       <SqlSourceIcon size={16} />
@@ -31,8 +31,9 @@ export function SourceIcon({ source }: { source?: "email" | "sql" | "both" | nul
   const emailIcon = <span title="Email" style={{ color: "#ffffff", fontSize: 15 }}>✉</span>
 
   if (source === "both") return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>{sqlIcon}{emailIcon}</div>
-  if (source === "email") return emailIcon
   if (source === "sql") return sqlIcon
+  // VDC, Barracuda y AS400 llegan por correo (Graph), igual que "email" generico.
+  if (source === "email" || source === "vdc" || source === "barracuda" || source === "as400") return emailIcon
   return <span style={{ color: "#64748b" }}>—</span>
 }
 
