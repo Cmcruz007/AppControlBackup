@@ -599,6 +599,10 @@ async function buildRefreshPayloadForWindow(cfg, inicio, fin, includeSql = true)
     includeSql && cfg?.sql ? sqlGetSessionsInRange(cfg.sql, inicio, fin) : Promise.resolve([]),
   ])
 
+  const vdcRules = Array.isArray(cfg?.veeamDataCloudRules) ? cfg.veeamDataCloudRules : []
+  const barracudaRules = Array.isArray(cfg?.barracudaRules) ? cfg.barracudaRules : []
+  const as400Rules = Array.isArray(cfg?.as400Rules) ? cfg.as400Rules : []
+
   const { fullRows: sqlFullRows } = processSessions(
     sessions || [],
     emails || [],
@@ -608,33 +612,59 @@ async function buildRefreshPayloadForWindow(cfg, inicio, fin, includeSql = true)
   )
 
   const vdcRows = buildVdcRows(
-    cfg?.veeamDataCloudRules || [],
+    vdcRules,
     emails || [],
     inicio,
     fin,
     '',
     criticalityByJob
-  ).map((r) => applyManualOverride(r, overrides, ahora))
+  ).map((r) => ({
+    ...applyManualOverride(r, overrides, ahora),
+    source: 'vdc',
+    category: 'vdc',
+    type: 'vdc',
+  }))
 
   const barraRows = buildBarracudaRows(
-    cfg?.barracudaRules || [],
+    barracudaRules,
     emails || [],
     inicio,
     fin,
     '',
     criticalityByJob
-  ).map((r) => applyManualOverride(r, overrides, ahora))
+  ).map((r) => ({
+    ...applyManualOverride(r, overrides, ahora),
+    source: 'barracuda',
+    category: 'barracuda',
+    type: 'barracuda',
+  }))
 
   const as400Rows = (
     await buildAs400Rows(
-      cfg?.as400Rules || [],
+      as400Rules,
       emails || [],
       inicio,
       fin,
       cfg,
       criticalityByJob
     )
-  ).map((r) => applyManualOverride(r, overrides, ahora))
+  ).map((r) => ({
+    ...applyManualOverride(r, overrides, ahora),
+    source: 'as400',
+    category: 'as400',
+    type: 'as400',
+  }))
+
+  console.log('[REFRESH:ROWS]', {
+    sqlRows: Array.isArray(sqlFullRows) ? sqlFullRows.length : 0,
+    vdcRules: vdcRules.length,
+    vdcRows: vdcRows.length,
+    barracudaRules: barracudaRules.length,
+    barracudaRows: barraRows.length,
+    as400Rules: as400Rules.length,
+    as400Rows: as400Rows.length,
+    emails: Array.isArray(emails) ? emails.length : 0,
+  })
 
   function cleanRow(row) {
     row = sanitizeRowForFrontend(decorateLogAvailability(row))
@@ -755,7 +785,7 @@ async function buildRefreshPayloadForWindow(cfg, inicio, fin, includeSql = true)
   ensureAs400CatalogFromRules()
 
   // Catálogo obligatorio AS400
-  const forcedAs400Jobs = ['Backup SD', 'Backup PR', 'Backup RR', 'Backup SDB/TGT']
+  const forcedAs400Jobs = ['Backup AS400 SD', 'Backup AS400 PR', 'Backup AS400 RR', 'Backup AS400 SDB/TGT']
 
   forcedAs400Jobs.forEach((jobName) => {
     const key = jobName.toUpperCase()
