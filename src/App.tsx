@@ -51,10 +51,11 @@ async function handleExportScheduleExcel() {
 function getAs400LogColor(jobName?: string) {
   const name = String(jobName || "").toLowerCase()
 
-  if (name.includes("backup sd") && !name.includes("sdb")) return "#00FF00"
-  if (name.includes("backup pr")) return "#F01818"
-  if (name.includes("backup rr")) return "#A0A000"
+  // Comprobamos SDB/TGT primero porque "sdb" contiene "sd" como substring.
   if (name.includes("sdb") || name.includes("tgt")) return "#7890F0"
+  if (name.includes("as400 pr") || name.includes("backup pr")) return "#F01818"
+  if (name.includes("as400 rr") || name.includes("backup rr")) return "#A0A000"
+  if (name.includes("as400 sd") || name.includes("backup sd")) return "#00FF00"
 
   return "#E5E7EB"
 }
@@ -181,7 +182,12 @@ function isSuccessRow(row?: JobRowUi | null) {
 
 function isBackupPrRrRow(row?: JobRowUi | null) {
   const name = normalizeNameForUi(row?.jobName || "")
-  return name === "backup pr" || name === "backup rr"
+  return (
+    name === "backup pr" ||
+    name === "backup rr" ||
+    name === "backup as400 pr" ||
+    name === "backup as400 rr"
+  )
 }
 
 function detectIsAs400Job(source: any, fallbackName?: string | null): boolean {
@@ -191,7 +197,7 @@ function detectIsAs400Job(source: any, fallbackName?: string | null): boolean {
 
   if (idStr.startsWith("as400:")) return true
   if (srcStr.includes("as400")) return true
-  if (/\bbackup\s+(sd|sdb|pr|rr)\b/.test(nameStr)) return true
+  if (/\bbackup\s+(as400\s+)?(sd|sdb|pr|rr)\b/.test(nameStr)) return true
   if (/sdb\/tgt/.test(nameStr)) return true
 
   return false
@@ -500,9 +506,17 @@ export default function App() {
   }, [dbJobs, fullRows, rows])
 
   const { fullRowsCalendario } = useMemo(() => {
-    const ahora = new Date()
-    const diaActual = ahora.getDay()
-    const esFinDeSemana = diaActual === 0 || diaActual === 6
+    // Comprobamos el dia de la semana de la VENTANA OPERACIONAL mostrada
+    // (windowStart), no el dia actual del sistema/navegador ni la fecha
+    // propia de cada fila (que puede estar vacia mientras el job AS400
+    // esta "EN CURSO" pendiente de recibir el correo). Asi, si la ventana
+    // que se esta mostrando es de sabado o domingo, ocultamos AS400 PR/RR
+    // tengan o no todavia una fecha de ejecucion propia.
+    const ventanaDate = windowStart ? new Date(windowStart) : null
+    const esFinDeSemana =
+      ventanaDate && !Number.isNaN(ventanaDate.getTime())
+        ? ventanaDate.getDay() === 0 || ventanaDate.getDay() === 6
+        : false
 
     if (!esFinDeSemana) {
       return { rowsCalendario: rows, fullRowsCalendario: fullRows }
@@ -522,7 +536,7 @@ export default function App() {
       rowsCalendario: rows.filter(filtrarJob),
       fullRowsCalendario: fullRows.filter(filtrarJob),
     }
-  }, [rows, fullRows])
+  }, [rows, fullRows, windowStart])
 
   const dashboardRows = useMemo(() => {
     return fullRowsCalendario.filter((r) => !isNoRunRow(r))
