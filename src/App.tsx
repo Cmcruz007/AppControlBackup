@@ -584,12 +584,14 @@ export default function App() {
 
         if (activeCategory === "vdc") {
           return (
-            name.includes("veeam") &&
+            name.includes("vdc") ||
             (
-              name.includes("exchange") ||
-              name.includes("sharepoint") ||
-              name.includes("onedrive") ||
-              name.includes("vdc")
+              name.includes("veeam") &&
+              (
+                name.includes("exchange") ||
+                name.includes("sharepoint") ||
+                name.includes("onedrive")
+              )
             )
           )
         }
@@ -601,7 +603,12 @@ export default function App() {
         if (activeCategory === "as400") {
           return (
             name.includes("as400") ||
-            (r.source === "email" && !name.includes("barracuda") && !name.includes("veeam"))
+            (
+              r.source === "email" &&
+              !name.includes("barracuda") &&
+              !name.includes("veeam") &&
+              !name.includes("vdc")
+            )
           )
         }
 
