@@ -1,4 +1,5 @@
 import { api } from "./utils/api"
+import { getAuthHeaders } from "./utils/api"
 import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import type { AppConfig } from './types'
 
@@ -277,15 +278,24 @@ export default function EmailReportPanel({
   async function sendTestReport() {
     setSendingTest(true)
     try {
-      const token = window.localStorage.getItem('bm.authToken') || ''
+      // Usamos SIEMPRE el mismo mecanismo de autenticación real de la app
+      // (Entra ID vía MSAL, o token clásico), en vez de leer localStorage
+      // directamente. Esto evita fallos de 401 en modo Entra ID, donde el
+      // token no vive en 'bm.authToken' sino que lo gestiona MSAL.
+      const headers = await getAuthHeaders()
+
       const res = await fetch('/api/email/daily-report/test', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
+        headers,
       })
+
       const data = await res.json().catch(() => null)
+
+      if (res.status === 401) {
+        alert('No autorizado. Vuelve a iniciar sesión e inténtalo de nuevo.')
+        return
+      }
+
       alert(data?.message || (data?.ok ? 'Informe enviado correctamente.' : 'No se pudo enviar el informe. Revisa los logs del servidor.'))
     } catch (e: any) {
       alert(`Error al enviar la prueba: ${e?.message ?? String(e)}`)

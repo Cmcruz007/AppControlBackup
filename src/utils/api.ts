@@ -82,6 +82,16 @@ async function headers(): Promise<Record<string, string>> {
   return h
 }
 
+// ─── Cabeceras de autenticación reutilizables fuera de este módulo ────────
+// Exportamos getAuthHeaders para que componentes que necesiten hacer un
+// fetch "a medida" (por ejemplo, un botón de prueba puntual) usen SIEMPRE
+// el mismo mecanismo de autenticación real de la app (Entra ID vía MSAL o
+// token clásico), en vez de leer localStorage directamente y arriesgarse a
+// no enviar el token correcto en modo Entra ID.
+export async function getAuthHeaders(): Promise<Record<string, string>> {
+  return headers()
+}
+
 async function handleResponse(res: Response) {
   if (res.status === 401) {
     notifyUnauthorized()
