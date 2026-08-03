@@ -988,26 +988,35 @@ async function sendDailyReport() {
       `[S-1]   resumen    : total=${summary.total}, ok=${summary.success}, avisos=${summary.warning}, errores=${summary.failed + summary.error}, enCurso=${summary.running}, noRun=${summary.noRun}, pendingTecnico=${summary.pending}, other=${summary.other}`
     )
 
+    // Prioridad (S-5): la configuracion grafica (cfg.dailyReport) manda
+    // siempre que tenga destinatarios definidos. BM_DAILY_REPORT_TO queda
+    // como fallback de compatibilidad si aun no se ha configurado nada
+    // desde la UI (p.ej. justo tras actualizar a v7.1).
     const fromEnv = (process.env.BM_DAILY_REPORT_TO || '').trim()
     const fromCfg = cfg?.dailyReport?.recipients
+    const fromCfgCc = cfg?.dailyReport?.cc
+    const fromCfgBcc = cfg?.dailyReport?.bcc
 
     console.log('[S-1] fromEnv:', JSON.stringify(fromEnv))
     console.log('[S-1] fromCfg:', JSON.stringify(fromCfg))
 
-    const to = fromEnv
-      ? fromEnv
-      : Array.isArray(fromCfg)
-        ? fromCfg.join(';')
-        : String(fromCfg || '').trim()
+    const joinList = (value) => (Array.isArray(value) ? value.join(';') : String(value || '').trim())
+
+    const to = Array.isArray(fromCfg) && fromCfg.length
+      ? joinList(fromCfg)
+      : (String(fromCfg || '').trim() || fromEnv)
+
+    const cc = joinList(fromCfgCc)
+    const bcc = joinList(fromCfgBcc)
 
     console.log('[S-1] to final:', JSON.stringify(to))
 
     if (!to) {
-      console.warn('[S-1] No hay destinatarios. Define BM_DAILY_REPORT_TO o cfg.dailyReport.recipients')
+      console.warn('[S-1] No hay destinatarios. Configuralos en Configuracion > Envio de correo, o define BM_DAILY_REPORT_TO')
       return false
     }
 
-    console.log('[S-1] Destinatarios:', to)
+    console.log('[S-1] Destinatarios:', to, '| CC:', cc, '| CCO:', bcc)
 
     const backupDateStr = formatBackupDateFromWindow(data.windowStart)
     const subject = `Informe Backup ${backupDateStr}`
@@ -1020,6 +1029,8 @@ async function sendDailyReport() {
 
     await sendGraphEmail(cfg, {
       to,
+      cc,
+      bcc,
       subject,
       bodyHtml,
     })
@@ -1043,19 +1054,38 @@ async function sendDailyReport() {
 }
 
 function startDailyReportScheduler() {
-  console.log('[S-1] Scheduler diario activo a las 17:00')
+  console.log('[S-1] Scheduler dinamico activo (dias/horas configurables desde Configuracion > Envio de correo)')
 
+  // Comprobamos cada 20s para no perder ningun minuto configurado. Cada
+  // combinacion "dia_HH:MM" solo se envia una vez, controlado por el marker
+  // (antes solo guardaba la fecha; ahora guarda fecha+hora para soportar
+  // varios envios al dia).
   setInterval(() => {
     const now = new Date()
-    const today = getLocalDateKey(now)
-    const lastSentDate = getLastDailyReportDate()
+    const cfg = loadConfig()
+    const reportCfg = cfg?.dailyReport || {}
 
-    if (now.getHours() !== 17) return
-    if (now.getMinutes() > 1) return
+    const days = Array.isArray(reportCfg.days) && reportCfg.days.length
+      ? reportCfg.days
+      : [0, 1, 2, 3, 4, 5, 6]
+    const times = Array.isArray(reportCfg.times) && reportCfg.times.length
+      ? reportCfg.times
+      : ['17:00']
+
+    if (!days.includes(now.getDay())) return
+
+    const hh = String(now.getHours()).padStart(2, '0')
+    const mi = String(now.getMinutes()).padStart(2, '0')
+    const currentTime = `${hh}:${mi}`
+
+    if (!times.includes(currentTime)) return
     if (dailyReportRunning) return
 
-    if (lastSentDate === today) {
-      console.log('[S-1] Informe diario ya enviado hoy:', today)
+    const today = getLocalDateKey(now)
+    const sentKey = `${today}_${currentTime}`
+    const lastSentKey = getLastDailyReportDate()
+
+    if (lastSentKey === sentKey) {
       return
     }
 
@@ -1064,13 +1094,13 @@ function startDailyReportScheduler() {
     sendDailyReport()
       .then((ok) => {
         if (ok) {
-          setLastDailyReportDate(today)
+          setLastDailyReportDate(sentKey)
         }
       })
       .finally(() => {
         dailyReportRunning = false
       })
-  }, 60000)
+  }, 20000)
 }
 
 // ─── Express App ────────────────────────────────────────────────────────────

@@ -203,6 +203,45 @@ function detectIsAs400Job(source: any, fallbackName?: string | null): boolean {
   return false
 }
 
+// Los jobs AS400 requieren SIEMPRE revision manual del log antes de darse
+// por buenos: aunque el correo llegue y el backend los marque como SUCCESS
+// automaticamente, ese SUCCESS no implica que alguien haya validado el
+// contenido. Por eso, mientras no exista un override manual del operador
+// para ese job, mostramos "PDTE COMPROBACION" en vez de "SUCCESS" y lo
+// excluimos de todos los KPIs (igual que se excluyen los NO-RUN).
+const AS400_PENDING_REVIEW_LABEL = "PDTE COMPROBACIÓN"
+const AS400_PENDING_REVIEW_STATUS = "pdte-comprobacion"
+
+function hasManualOverrideFor(jobName: string | undefined | null, manualOverrides: any): boolean {
+  if (!jobName || !manualOverrides) return false
+  return Object.prototype.hasOwnProperty.call(manualOverrides, jobName)
+}
+
+function applyAs400PendingReview(row: JobRowUi, manualOverrides: any): JobRowUi {
+  const anyRow = row as any
+
+  // Si ya hay un override manual guardado para este job, el operador ya lo
+  // reviso: respetamos siempre su decision y no tocamos nada.
+  if (hasManualOverrideFor(row?.jobName, manualOverrides)) return row
+
+  // Solo interceptamos el caso "AS400 + auto-SUCCESS". Si el job viniera
+  // como ERROR o WARNING, ya se refleja correctamente en Errores/Avisos.
+  if (!detectIsAs400Job(anyRow, row?.jobName)) return row
+  if (getDisplayState(row) !== "SUCCESS") return row
+
+  return {
+    ...row,
+    globalState: AS400_PENDING_REVIEW_LABEL,
+    status: AS400_PENDING_REVIEW_STATUS,
+    stateLabel: AS400_PENDING_REVIEW_LABEL,
+    stateClass: "unknown",
+  } as any
+}
+
+function isAs400PendingReviewRow(row?: JobRowUi | null): boolean {
+  return getDisplayState(row) === AS400_PENDING_REVIEW_LABEL
+}
+
 function normalizeB2Row(row: JobRowUi): JobRowUi {
   const anyRow = row as any
 
@@ -257,6 +296,7 @@ function computeB2Kpis(inputRows: JobRowUi[]) {
 
   for (const row of inputRows || []) {
     if (isNoRunRow(row)) continue
+    if (isAs400PendingReviewRow(row)) continue
 
     const state = getDisplayState(row)
 
@@ -539,8 +579,12 @@ export default function App() {
   }, [rows, fullRows, windowStart])
 
   const dashboardRows = useMemo(() => {
-    return fullRowsCalendario.filter((r) => !isNoRunRow(r))
-  }, [fullRowsCalendario])
+    const manualOverrides = (config as any)?.manualOverrides
+
+    return fullRowsCalendario
+      .filter((r) => !isNoRunRow(r))
+      .map((r) => applyAs400PendingReview(r, manualOverrides))
+  }, [fullRowsCalendario, config])
 
   const kpis = useMemo(() => computeB2Kpis(dashboardRows), [dashboardRows])
 

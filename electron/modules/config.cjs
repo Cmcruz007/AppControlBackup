@@ -32,7 +32,67 @@ function getLegacyConfigPath() {
 }
 
 const PRIVATE_KEYS = ['sql', 'graph', 'refreshMinutes', 'toleranceMinutes', 'pin', 'manualOverrides']
-const SHARED_KEYS  = ['criticalityByJob', 'veeamDataCloudRules', 'barracudaRules', 'as400Rules']
+const SHARED_KEYS  = ['criticalityByJob', 'veeamDataCloudRules', 'barracudaRules', 'as400Rules', 'dailyReport']
+
+// ─── Valores por defecto del informe diario (S-5) ──────────────────────────
+// days: 0=Domingo ... 6=Sabado (igual que Date.getDay()). Por defecto todos
+// los dias, para no alterar el comportamiento actual si nunca se configura.
+// times: array de horas "HH:MM". Por defecto solo 17:00, igual que antes.
+const DEFAULT_DAILY_REPORT = {
+  recipients: [],
+  cc: [],
+  bcc: [],
+  days: [0, 1, 2, 3, 4, 5, 6],
+  times: ['17:00'],
+}
+
+function normalizeEmailList(value) {
+  if (Array.isArray(value)) {
+    return value
+      .map((x) => String(x || '').trim())
+      .filter(Boolean)
+      .slice(0, 50)
+  }
+  if (typeof value === 'string') {
+    return value
+      .split(/[;,]/)
+      .map((x) => x.trim())
+      .filter(Boolean)
+      .slice(0, 50)
+  }
+  return []
+}
+
+function normalizeDaysList(value) {
+  if (!Array.isArray(value)) return [...DEFAULT_DAILY_REPORT.days]
+  const clean = value
+    .map((d) => Number(d))
+    .filter((d) => Number.isInteger(d) && d >= 0 && d <= 6)
+  const unique = Array.from(new Set(clean)).sort((a, b) => a - b)
+  return unique.length ? unique : [...DEFAULT_DAILY_REPORT.days]
+}
+
+function normalizeTimesList(value) {
+  if (!Array.isArray(value)) return [...DEFAULT_DAILY_REPORT.times]
+  const timeRe = /^([01]\d|2[0-3]):([0-5]\d)$/
+  const clean = value
+    .map((t) => String(t || '').trim())
+    .filter((t) => timeRe.test(t))
+  const unique = Array.from(new Set(clean)).sort()
+  return unique.length ? unique : [...DEFAULT_DAILY_REPORT.times]
+}
+
+function normalizeDailyReport(raw) {
+  if (!raw || typeof raw !== 'object') return { ...DEFAULT_DAILY_REPORT }
+
+  return {
+    recipients: normalizeEmailList(raw.recipients),
+    cc: normalizeEmailList(raw.cc),
+    bcc: normalizeEmailList(raw.bcc),
+    days: normalizeDaysList(raw.days),
+    times: normalizeTimesList(raw.times),
+  }
+}
 
 // ─── Cifrado AES-256-GCM (modo servidor sin Electron) ──────────────────────
 function getAesKey() {
@@ -120,6 +180,25 @@ function loadConfig() {
   } catch (e) { console.error('Error cargando config compartida:', e.message || e) }
 
   const merged = { ...priv, ...shared }
+
+  // ─── Normalizacion de dailyReport (S-5) ────────────────────────────────
+  // Aseguramos que siempre exista una forma valida y completa, aunque el
+  // fichero no tenga aun la clave (retrocompatibilidad con versiones <7.1).
+  merged.dailyReport = normalizeDailyReport(merged.dailyReport)
+
+  // ─── Migracion "en caliente" desde BM_DAILY_REPORT_TO ──────────────────
+  // Si todavia no se ha configurado nada desde la UI (recipients vacio),
+  // precargamos (solo para mostrar/editar, sin persistir aun) los
+  // destinatarios que YA estan recibiendo el correo via la variable de
+  // entorno. Asi, la primera vez que se abre la pestaña "Envio de correo"
+  // aparecen ya los destinatarios reales, listos para editar y guardar.
+  if (!merged.dailyReport.recipients.length) {
+    const envRecipients = normalizeEmailList(process.env.BM_DAILY_REPORT_TO || '')
+    if (envRecipients.length) {
+      merged.dailyReport.recipients = envRecipients
+      console.log('[CONFIG] dailyReport.recipients precargado desde BM_DAILY_REPORT_TO (aun no guardado):', envRecipients)
+    }
+  }
 
   // ─── Migración automática de overrides antiguos sin timestamp ─────────────
   // Si un override no tiene fecha, se le asigna ahora.
@@ -236,6 +315,7 @@ function validateConfigInput(cfg) {
   if (Array.isArray(cfg.veeamDataCloudRules)) clean.veeamDataCloudRules = cfg.veeamDataCloudRules.slice(0, 100)
   if (Array.isArray(cfg.barracudaRules)) clean.barracudaRules = cfg.barracudaRules.slice(0, 100)
   if (Array.isArray(cfg.as400Rules)) clean.as400Rules = cfg.as400Rules.slice(0, 100)
+  if (cfg.dailyReport !== undefined) clean.dailyReport = normalizeDailyReport(cfg.dailyReport)
 
   return clean
 }
@@ -272,6 +352,7 @@ function saveConfig(cfg) {
     veeamDataCloudRules: cfg.veeamDataCloudRules !== undefined ? cfg.veeamDataCloudRules : (oldShared.veeamDataCloudRules || []),
     barracudaRules: cfg.barracudaRules !== undefined ? cfg.barracudaRules : (oldShared.barracudaRules || []),
     as400Rules: cfg.as400Rules !== undefined ? cfg.as400Rules : (oldShared.as400Rules || []),
+    dailyReport: cfg.dailyReport !== undefined ? cfg.dailyReport : normalizeDailyReport(oldShared.dailyReport),
   }
 
   try {

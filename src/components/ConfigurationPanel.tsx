@@ -2,6 +2,7 @@ import { useState } from "react"
 import type { AppConfig, ConfigTab } from "../types/ui"
 import Settings from "../Settings"
 import CriticalityPanel from "../CriticalityPanel"
+import EmailReportPanel from "../EmailReportPanel"
 import VeeamDataCloudPanel from "../VeeamDataCloudPanel"
 import BarracudaPanel from "../BarracudaPanel"
 import As400Panel from "../As400Panel"
@@ -51,6 +52,7 @@ export default function ConfigurationPanel({
         <div style={{ display: "flex", borderBottom: "1px solid var(--border)" }}>
           <button type="button" onClick={() => setActiveConfigTab("general")} className={`config-panel-tab ${activeConfigTab === "general" ? "active" : ""}`}>General</button>
           <button type="button" onClick={() => setActiveConfigTab("criticality")} className={`config-panel-tab ${activeConfigTab === "criticality" ? "active" : ""}`}>Criticidades</button>
+          <button type="button" onClick={() => setActiveConfigTab("emailReport")} className={`config-panel-tab ${activeConfigTab === "emailReport" ? "active" : ""}`}>ENVÍO DE CORREO</button>
           <button type="button" onClick={() => setActiveConfigTab("veeamDataCloud")} className={`config-panel-tab ${activeConfigTab === "veeamDataCloud" ? "active" : ""}`}>VEEAM DATA CLOUD</button>
           <button type="button" onClick={() => setActiveConfigTab("barracuda")} className={`config-panel-tab ${activeConfigTab === "barracuda" ? "active" : ""}`}>BARRACUDA</button>
           <button type="button" onClick={() => setActiveConfigTab("as400")} className={`config-panel-tab ${activeConfigTab === "as400" ? "active" : ""}`}>AS400</button>
@@ -58,6 +60,7 @@ export default function ConfigurationPanel({
         <div style={{ padding: 16, maxHeight: "80vh", overflow: "auto" }}>
           {activeConfigTab === "general" && <Settings config={config} onSaved={onSaved} />}
           {activeConfigTab === "criticality" && <CriticalityPanel config={config} onSaved={onSaved} jobNames={allJobNames} />}
+          {activeConfigTab === "emailReport" && <EmailReportPanel config={config} onSaved={onSaved} />}
           {activeConfigTab === "veeamDataCloud" && <VeeamDataCloudPanel config={config} onSaved={onSaved} />}
           {activeConfigTab === "barracuda" && <BarracudaPanel config={config} onSaved={onSaved} />}
           {activeConfigTab === "as400" && <As400Panel config={config} onSaved={onSaved} />}

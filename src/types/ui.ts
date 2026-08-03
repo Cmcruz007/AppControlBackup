@@ -13,7 +13,7 @@ export type CategoryFilter = typeof JOB_CATEGORIES[number]['id']
 export type Tab = "dashboard" | "history" | "executions"
 export type SortKey = "status" | "jobName" | "nextRun" | "source" | "duration" | "reason"
 export type SortDir = "asc" | "desc"
-export type ConfigTab = "general" | "criticality" | "veeamDataCloud" | "barracuda" | "as400"
+export type ConfigTab = "general" | "criticality" | "emailReport" | "veeamDataCloud" | "barracuda" | "as400"
 export type DashboardKpiFilter = "all" | "success" | "warning" | "failed" | "running" | "pending"
 
 export interface ManualOverride {
