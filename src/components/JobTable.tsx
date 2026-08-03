@@ -1,4 +1,5 @@
-﻿import type { JobRow } from "../types/ui"
+﻿import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react"
+import type { JobRow } from "../types/ui"
 import type { SortKey, SortDir } from "../types/ui"
 import { SourceIcon } from "./Icons"
 
@@ -49,6 +50,63 @@ function getVisibleDetail(row: any): string {
   return String(row?.detail || row?.reason || "")
 }
 
+// --- Columnas redimensionables (Directorio de Jobs / Dashboard) ---------
+// El ancho de cada columna se puede arrastrar desde el borde derecho de la
+// cabecera y se recuerda entre sesiones en localStorage (por navegador).
+type ResizableColumnKey =
+  | "jobName"
+  | "status"
+  | "source"
+  | "nextRun"
+  | "duration"
+  | "reason"
+  | "accion"
+
+const COLUMN_WIDTHS_STORAGE_KEY = "bm.jobTable.columnWidths.v1"
+
+const DEFAULT_COLUMN_WIDTHS: Record<ResizableColumnKey, number> = {
+  jobName: 320,
+  status: 110,
+  source: 90,
+  nextRun: 190,
+  duration: 130,
+  reason: 280,
+  accion: 175,
+}
+
+const MIN_COLUMN_WIDTHS: Record<ResizableColumnKey, number> = {
+  jobName: 160,
+  status: 90,
+  source: 70,
+  nextRun: 140,
+  duration: 90,
+  reason: 140,
+  accion: 130,
+}
+
+function loadStoredColumnWidths(): Partial<Record<ResizableColumnKey, number>> {
+  try {
+    const raw = window.localStorage.getItem(COLUMN_WIDTHS_STORAGE_KEY)
+    if (!raw) return {}
+
+    const parsed = JSON.parse(raw)
+    if (parsed && typeof parsed === "object") return parsed
+
+    return {}
+  } catch {
+    return {}
+  }
+}
+
+function persistColumnWidths(widths: Record<ResizableColumnKey, number>) {
+  try {
+    window.localStorage.setItem(COLUMN_WIDTHS_STORAGE_KEY, JSON.stringify(widths))
+  } catch {
+    // localStorage no disponible (modo privado, cuota, etc.): no persistimos,
+    // pero no rompemos la UI por ello.
+  }
+}
+
 export default function JobTable({
   rows,
   onEditComment,
@@ -68,6 +126,94 @@ export default function JobTable({
   onSort: (k: SortKey) => void
   readOnly?: boolean
 }) {
+  const [columnWidths, setColumnWidths] = useState<Record<ResizableColumnKey, number>>(() => ({
+    ...DEFAULT_COLUMN_WIDTHS,
+    ...loadStoredColumnWidths(),
+  }))
+
+  const resizingRef = useRef<{ col: ResizableColumnKey; startX: number; startWidth: number } | null>(null)
+
+  const handleResizeMove = useCallback((e: MouseEvent) => {
+    const resizing = resizingRef.current
+    if (!resizing) return
+
+    const delta = e.clientX - resizing.startX
+    const minWidth = MIN_COLUMN_WIDTHS[resizing.col]
+    const nextWidth = Math.max(minWidth, Math.round(resizing.startWidth + delta))
+
+    setColumnWidths((prev) => {
+      if (prev[resizing.col] === nextWidth) return prev
+      return { ...prev, [resizing.col]: nextWidth }
+    })
+  }, [])
+
+  const handleResizeEnd = useCallback(() => {
+    if (!resizingRef.current) return
+
+    resizingRef.current = null
+    window.removeEventListener("mousemove", handleResizeMove)
+    window.removeEventListener("mouseup", handleResizeEnd)
+
+    setColumnWidths((current) => {
+      persistColumnWidths(current)
+      return current
+    })
+  }, [handleResizeMove])
+
+  const startResize = useCallback(
+    (col: ResizableColumnKey) => (e: ReactMouseEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+
+      resizingRef.current = { col, startX: e.clientX, startWidth: columnWidths[col] }
+
+      window.addEventListener("mousemove", handleResizeMove)
+      window.addEventListener("mouseup", handleResizeEnd)
+    },
+    [columnWidths, handleResizeMove, handleResizeEnd]
+  )
+
+  const resetColumnWidth = useCallback(
+    (col: ResizableColumnKey) => (e: ReactMouseEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+
+      setColumnWidths((prev) => {
+        const next = { ...prev, [col]: DEFAULT_COLUMN_WIDTHS[col] }
+        persistColumnWidths(next)
+        return next
+      })
+    },
+    []
+  )
+
+  useEffect(() => {
+    return () => {
+      window.removeEventListener("mousemove", handleResizeMove)
+      window.removeEventListener("mouseup", handleResizeEnd)
+    }
+  }, [handleResizeMove, handleResizeEnd])
+
+  const ResizeHandle = ({ col }: { col: ResizableColumnKey }) => (
+    <span
+      onMouseDown={startResize(col)}
+      onDoubleClick={resetColumnWidth(col)}
+      onClick={(e) => e.stopPropagation()}
+      title="Arrastra para cambiar el ancho · doble clic para restaurar"
+      style={{
+        position: "absolute",
+        top: 0,
+        right: 0,
+        bottom: 0,
+        width: 8,
+        cursor: "col-resize",
+        userSelect: "none",
+        zIndex: 2,
+        borderRight: "2px solid rgba(148, 163, 184, 0.25)",
+      }}
+    />
+  )
+
   const canShowBackupLogIcon = (r: any) => {
     const jobName = String(r?.jobName ?? r?.name ?? "").toLowerCase()
     const source = String(r?.source ?? r?.type ?? "").toLowerCase()
@@ -99,33 +245,56 @@ export default function JobTable({
 
 return (
   <>
-    <table className="compact-table desktop-job-table">
+    <div className="job-table-scroll" style={{ overflowX: "auto" }}>
+    <table className="compact-table desktop-job-table" style={{ tableLayout: "fixed", width: "100%" }}>
+      <colgroup>
+        <col style={{ width: columnWidths.jobName }} />
+        <col style={{ width: columnWidths.status }} />
+        <col style={{ width: columnWidths.source }} />
+        <col style={{ width: columnWidths.nextRun }} />
+        <col style={{ width: columnWidths.duration }} />
+        <col style={{ width: columnWidths.reason }} />
+        {!readOnly && <col style={{ width: columnWidths.accion }} />}
+      </colgroup>
 
       <thead>
         <tr>
-          <th className="sortable" onClick={() => onSort("jobName")}>
+          <th className="sortable" onClick={() => onSort("jobName")} style={{ position: "relative" }}>
             Job {sortKey === "jobName" ? (sortDir === "asc" ? "▲" : "▼") : ""}
+            <ResizeHandle col="jobName" />
           </th>
 
-          <th className="sortable" onClick={() => onSort("status")}>
+          <th className="sortable" onClick={() => onSort("status")} style={{ position: "relative" }}>
             Estado {sortKey === "status" ? (sortDir === "asc" ? "▲" : "▼") : ""}
+            <ResizeHandle col="status" />
           </th>
 
-          <th className="sortable" onClick={() => onSort("source")}>
+          <th className="sortable" onClick={() => onSort("source")} style={{ position: "relative" }}>
             Fuente {sortKey === "source" ? (sortDir === "asc" ? "▲" : "▼") : ""}
+            <ResizeHandle col="source" />
           </th>
 
-          <th className="sortable" onClick={() => onSort("nextRun")}>
+          <th className="sortable" onClick={() => onSort("nextRun")} style={{ position: "relative" }}>
             Inicio {sortKey === "nextRun" ? (sortDir === "asc" ? "▲" : "▼") : ""}
+            <ResizeHandle col="nextRun" />
           </th>
 
-          <th>Duración</th>
+          <th style={{ position: "relative" }}>
+            Duración
+            <ResizeHandle col="duration" />
+          </th>
 
-          <th className="sortable" onClick={() => onSort("reason")}>
+          <th className="sortable" onClick={() => onSort("reason")} style={{ position: "relative" }}>
             Detalle {sortKey === "reason" ? (sortDir === "asc" ? "▲" : "▼") : ""}
+            <ResizeHandle col="reason" />
           </th>
 
-          {!readOnly && <th>Acción</th>}
+          {!readOnly && (
+            <th style={{ position: "relative" }}>
+              Acción
+              <ResizeHandle col="accion" />
+            </th>
+          )}
         </tr>
       </thead>
 
@@ -214,7 +383,7 @@ return (
                 <SourceIcon source={r.source} />
               </td>
 
-              <td className="tabular" style={{ width: 180, minWidth: 180, whiteSpace: "nowrap" }}>
+              <td className="tabular" style={{ whiteSpace: "nowrap" }}>
                 {(() => {
                   const val = r.nextRun ?? r.startTime
                   if (!val) return "—"
@@ -266,7 +435,7 @@ return (
                 </div>
               </td>
 
-              <td>{displayReason}</td>
+              <td style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{displayReason}</td>
 
               {!readOnly && (
                 <td style={{ whiteSpace: "nowrap" }}>
@@ -292,6 +461,7 @@ return (
         })}
     </tbody>
     </table>
+    </div>
 
     <div className="mobile-job-cards">
       {rows.map((r) => {
