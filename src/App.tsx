@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import * as XLSX from "xlsx-js-style"
 import TokenGate from "./components/TokenGate"
 import { exportScheduleExcel } from "./scheduleExcel"
@@ -343,33 +343,11 @@ export default function App() {
   const [executionsLoading, setExecutionsLoading] = useState(false)
   const [executionsError, setExecutionsError] = useState<string | null>(null)
   const [authGateOpen, setAuthGateOpen] = useState(false)
+  const unauthorizedRetryRef = useRef<{ count: number; lastAt: number }>({ count: 0, lastAt: 0 })
 
   const [dbJobs, setDbJobs] = useState<string[]>([])
   const [logModalData, setLogModalData] = useState<{ jobName: string; content: string | null; isAs400?: boolean } | null>(null)
   const [versionModalOpen, setVersionModalOpen] = useState(false)
-
-  useEffect(() => {
-    // Si estamos en modo Entra ID, no usamos TokenGate. La reautenticación
-    // la maneja MSAL automáticamente (getEntraAccessToken -> acquireTokenRedirect).
-    if (USE_ENTRA) return
-
-    function handleUnauthorized() {
-      setAuthGateOpen(true)
-    }
-
-    window.addEventListener("bm:unauthorized", handleUnauthorized)
-
-    try {
-      const hasToken = !!window.localStorage.getItem("bm.authToken")
-      if (!hasToken) setAuthGateOpen(true)
-    } catch {
-      // ignorar
-    }
-
-    return () => {
-      window.removeEventListener("bm:unauthorized", handleUnauthorized)
-    }
-  }, [])
 
   const refresh = useCallback(async () => {
     setLoading(true)
@@ -407,6 +385,51 @@ export default function App() {
       setLoading(false)
     }
   }, [tab])
+
+  useEffect(() => {
+    function handleUnauthorized() {
+      if (USE_ENTRA) {
+        // En modo Entra no mostramos TokenGate, pero SI reintentamos: un 401
+        // aqui suele significar que MSAL aun no habia asentado el token justo
+        // tras un login/redirect (ver EntraGate.tsx). Sin este reintento, la
+        // app se quedaba vacia en silencio hasta un refresco manual del
+        // usuario -- esto le paso a una companera en su primer login
+        // (03/08/2026, logs [AUTH] hasBearer=false repetidos).
+        const now = Date.now()
+        const state = unauthorizedRetryRef.current
+
+        if (now - state.lastAt < 3000) return
+
+        if (state.count >= 5) {
+          setErr("No se pudo autenticar con Microsoft Entra ID. Recarga la pagina (F5).")
+          return
+        }
+
+        state.count += 1
+        state.lastAt = now
+        console.warn(`[AUTH] 401 en modo Entra ID, reintento ${state.count}/5...`)
+        refresh()
+        return
+      }
+
+      setAuthGateOpen(true)
+    }
+
+    window.addEventListener("bm:unauthorized", handleUnauthorized)
+
+    if (!USE_ENTRA) {
+      try {
+        const hasToken = !!window.localStorage.getItem("bm.authToken")
+        if (!hasToken) setAuthGateOpen(true)
+      } catch {
+        // ignorar
+      }
+    }
+
+    return () => {
+      window.removeEventListener("bm:unauthorized", handleUnauthorized)
+    }
+  }, [refresh])
 
   async function reloadJobsDirectory() {
     try {

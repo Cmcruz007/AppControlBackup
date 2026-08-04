@@ -1,11 +1,56 @@
+import { useEffect, useState } from "react"
 import { useMsal } from "@azure/msal-react"
-import { loginRequest } from "../auth/msalConfig"
+import { loginRequest, getEntraAccessToken } from "../auth/msalConfig"
 
 export default function EntraGate({ children }: { children: React.ReactNode }) {
   const { instance, accounts, inProgress } = useMsal()
 
   const isLoading = inProgress !== "none"
   const isLoggedIn = accounts.length > 0
+
+  // No basta con que MSAL tenga una cuenta en cache (isLoggedIn): hay que
+  // confirmar que se puede obtener un TOKEN DE ACCESO real antes de montar
+  // <App/>. Si no, la app arranca, pide datos sin token, recibe 401 en
+  // silencio (en modo Entra no se reintenta) y se queda vacia hasta que el
+  // usuario recarga manualmente. Esto es justo lo que le paso a una
+  // companera en su primer login (ver captura + logs [AUTH] hasBearer=false
+  // repetidos del 03/08/2026).
+  const [tokenReady, setTokenReady] = useState(false)
+
+  useEffect(() => {
+    if (!isLoggedIn || isLoading) {
+      setTokenReady(false)
+      return
+    }
+
+    let cancelled = false
+    setTokenReady(false)
+
+    async function ensureToken() {
+      for (let attempt = 0; attempt < 4; attempt++) {
+        const token = await getEntraAccessToken()
+        if (cancelled) return
+
+        if (token) {
+          setTokenReady(true)
+          return
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 700))
+      }
+
+      if (!cancelled) {
+        console.warn("[EntraGate] No se pudo confirmar el token tras varios intentos; se deja pasar para no bloquear al usuario.")
+        setTokenReady(true)
+      }
+    }
+
+    ensureToken()
+
+    return () => {
+      cancelled = true
+    }
+  }, [isLoggedIn, isLoading])
 
   async function login() {
     await instance.loginRedirect(loginRequest)
@@ -15,7 +60,7 @@ export default function EntraGate({ children }: { children: React.ReactNode }) {
     await instance.logoutRedirect()
   }
 
-  if (isLoading) {
+  if (isLoading || (isLoggedIn && !tokenReady)) {
     return (
       <div
         style={{
