@@ -212,22 +212,51 @@ function detectIsAs400Job(source: any, fallbackName?: string | null): boolean {
 const AS400_PENDING_REVIEW_LABEL = "PDTE COMPROBACIÓN"
 const AS400_PENDING_REVIEW_STATUS = "pdte-comprobacion"
 
-function hasManualOverrideFor(jobName: string | undefined | null, manualOverrides: any): boolean {
+function hasManualOverrideFor(
+  jobName: string | undefined | null,
+  manualOverrides: any,
+  windowStart?: string | null
+): boolean {
   if (!jobName || !manualOverrides) return false
-  return Object.prototype.hasOwnProperty.call(manualOverrides, jobName)
+  if (!Object.prototype.hasOwnProperty.call(manualOverrides, jobName)) return false
+
+  // El override solo es valido para la ventana operacional en la que se
+  // guardo. Cada dia a las 18:00 arranca una nueva ventana, y una revision
+  // manual de ayer no debe "heredarse" automaticamente a la ejecucion de
+  // hoy: el operador debe volver a confirmar el log del dia en curso.
+  if (!windowStart) return true
+
+  const ov = manualOverrides[jobName]
+  const ovDateRaw = ov?.timestamp || ov?.updatedAt || ov?.date || null
+  if (!ovDateRaw) return true // overrides antiguos sin fecha: se respetan (compat)
+
+  const ovDate = new Date(ovDateRaw)
+  const winStart = new Date(windowStart)
+  if (Number.isNaN(ovDate.getTime()) || Number.isNaN(winStart.getTime())) return true
+
+  return ovDate.getTime() >= winStart.getTime()
 }
 
-function applyAs400PendingReview(row: JobRowUi, manualOverrides: any): JobRowUi {
+function applyAs400PendingReview(
+  row: JobRowUi,
+  manualOverrides: any,
+  windowStart?: string | null
+): JobRowUi {
   const anyRow = row as any
 
-  // Si ya hay un override manual guardado para este job, el operador ya lo
-  // reviso: respetamos siempre su decision y no tocamos nada.
-  if (hasManualOverrideFor(row?.jobName, manualOverrides)) return row
+  const isAs400 = detectIsAs400Job(anyRow, row?.jobName)
+  const hasOverride = hasManualOverrideFor(row?.jobName, manualOverrides, windowStart)
+  const display = getDisplayState(row)
+
+  // Si ya hay un override manual guardado para este job DENTRO DE LA VENTANA
+  // OPERACIONAL ACTUAL, el operador ya lo reviso hoy: respetamos su decision.
+  // Un override de una ventana anterior (p.ej. de ayer) ya no cuenta.
+  if (hasOverride) return row
 
   // Solo interceptamos el caso "AS400 + auto-SUCCESS". Si el job viniera
   // como ERROR o WARNING, ya se refleja correctamente en Errores/Avisos.
-  if (!detectIsAs400Job(anyRow, row?.jobName)) return row
-  if (getDisplayState(row) !== "SUCCESS") return row
+  if (!isAs400) return row
+  if (display !== "SUCCESS") return row
 
   return {
     ...row,
@@ -292,11 +321,22 @@ function computeB2Kpis(inputRows: JobRowUi[]) {
     error: 0,
     running: 0,
     pending: 0,
+    as400PendingReview: 0,
   }
 
   for (const row of inputRows || []) {
     if (isNoRunRow(row)) continue
-    if (isAs400PendingReviewRow(row)) continue
+
+    // Los AS400 pendientes de revision manual SI cuentan en el total de
+    // "Jobs hoy" (a diferencia de los NO-RUN, que quedan fuera del todo):
+    // son ejecuciones reales de hoy, solo que aun sin validar por un
+    // humano. Ademas se contabilizan en su propio KPI para que el
+    // operador vea de un vistazo cuantos estan a la espera de revision.
+    if (isAs400PendingReviewRow(row)) {
+      kpis.total += 1
+      kpis.as400PendingReview += 1
+      continue
+    }
 
     const state = getDisplayState(row)
 
@@ -606,8 +646,8 @@ export default function App() {
 
     return fullRowsCalendario
       .filter((r) => !isNoRunRow(r))
-      .map((r) => applyAs400PendingReview(r, manualOverrides))
-  }, [fullRowsCalendario, config])
+      .map((r) => applyAs400PendingReview(r, manualOverrides, windowStart))
+  }, [fullRowsCalendario, config, windowStart])
 
   const kpis = useMemo(() => computeB2Kpis(dashboardRows), [dashboardRows])
 
@@ -699,6 +739,10 @@ export default function App() {
 
     if (statusFilter !== "all") {
       source = source.filter((r) => {
+        if (statusFilter === "as400-pending") {
+          return isAs400PendingReviewRow(r)
+        }
+
         if (isNoRunRow(r)) return false
 
         if (statusFilter === "success") return isSuccessRowCb(r)
@@ -1023,6 +1067,14 @@ export default function App() {
                   accentColor="#60a5fa"
                   active={statusFilter === "running"}
                   onClick={() => handleDashboardKpiClick("running")}
+                />
+
+                <Kpi
+                  label="Pdte. Comprobación"
+                  value={kpis.as400PendingReview}
+                  accentColor="#a78bfa"
+                  active={statusFilter === "as400-pending"}
+                  onClick={() => handleDashboardKpiClick("as400-pending")}
                 />
               </div>
 

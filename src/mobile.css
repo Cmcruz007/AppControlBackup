@@ -1,7 +1,6 @@
 /* =========================================================
    M-1 Mobile Foundation - BackupMonitor Mobile v7
    ========================================================= */
-
 .mobile-job-cards {
   display: none;
 }
@@ -43,10 +42,6 @@
   .kpi-card .value {
     font-size: 26px;
     line-height: 1.1;
-  }
-
-  .kpis .kpi-card:nth-child(5) {
-    grid-column: 1 / -1;
   }
 
   .desktop-job-table {

@@ -56,3 +56,13 @@ daily-report-last-sent.txt
 .env.production
 
 .env.production
+
+#Antiguos
+*old 
+*old[0-9]* 
+*.tsxold 
+*.cssold 
+*.jsold 
+*.tsold 
+*.mdold 
+diff_*.txt

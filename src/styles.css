@@ -231,18 +231,18 @@ input, textarea, select {
 /* --- CONTENEDOR DE LOS KPIs --- */
 .kpis {
   display: grid;
-  grid-template-columns: repeat(5, 1fr); /* 5 columnas iguales */
+  grid-template-columns: repeat(6, 1fr); /* 6 columnas iguales */
   gap: 16px; /* Espacio entre las cajas */
   margin-bottom: 16px;
 }
 
 /* --- ESTILOS DE LAS CAJAS KPI --- */
 .kpi-card {
-  background: var(--panel-2); 
+  background: var(--panel-2);
   padding: 16px;
   border-radius: 10px;
   border: 1px solid var(--border);
-  position: relative; 
+  position: relative;
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -266,9 +266,9 @@ input, textarea, select {
   top: 0;
   right: 0;
   bottom: 0;
-  width: 4px; 
-  background: var(--accent); 
-  box-shadow: -2px 0 8px var(--accent); 
+  width: 4px;
+  background: var(--accent);
+  box-shadow: -2px 0 8px var(--accent);
   opacity: 0.8;
 }
 
@@ -284,9 +284,7 @@ button {
   font-weight: 500;
 }
 
-button:hover {
-  opacity: .9;
-}
+button:hover {}
 
 button.secondary {
   background: var(--panel-2);
@@ -616,7 +614,6 @@ button:disabled {
 .email-modal-fields input { background: var(--panel-2); border: 1px solid var(--border); color: var(--text); padding: 8px 12px; border-radius: 6px; font-size: 13px; width: 100%; }
 .email-modal-preview { flex: 1; overflow: auto; padding: 20px; background: white; }
 .email-modal-actions { padding: 14px 20px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; }
-
 
 /* ── Version badge ────────────────────────────────────── */
 .version-badge {

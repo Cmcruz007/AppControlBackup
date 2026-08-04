@@ -14,7 +14,7 @@ export type Tab = "dashboard" | "history" | "executions"
 export type SortKey = "status" | "jobName" | "nextRun" | "source" | "duration" | "reason"
 export type SortDir = "asc" | "desc"
 export type ConfigTab = "general" | "criticality" | "emailReport" | "veeamDataCloud" | "barracuda" | "as400"
-export type DashboardKpiFilter = "all" | "success" | "warning" | "failed" | "running" | "pending"
+export type DashboardKpiFilter = "all" | "success" | "warning" | "failed" | "running" | "pending" | "as400-pending"
 
 export interface ManualOverride {
   status: string
