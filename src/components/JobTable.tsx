@@ -217,6 +217,26 @@ export default function JobTable({
     />
   )
 
+  const completedRowsWithDuration = rows.filter((row) => {
+    const state = getDisplayState(row)
+    const durationMs = Number(row.durationMs)
+
+    return (
+      (state === "SUCCESS" || state === "WARNING" || state === "ERROR") &&
+      Number.isFinite(durationMs) &&
+      durationMs > 0
+    )
+  })
+
+  const slowestJobIds = new Set<string>(
+    completedRowsWithDuration.length >= 10
+      ? [...completedRowsWithDuration]
+          .sort((a, b) => Number(b.durationMs) - Number(a.durationMs))
+          .slice(0, 10)
+          .map((row) => row.jobId)
+      : []
+  )
+
   const canShowBackupLogIcon = (r: any) => {
     const jobName = String(r?.jobName ?? r?.name ?? "").toLowerCase()
     const source = String(r?.source ?? r?.type ?? "").toLowerCase()
@@ -419,6 +439,10 @@ return (
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <span style={{ minWidth: "45px" }}>{r.duration ?? "—"}</span>
 
+                  {slowestJobIds.has(r.jobId) && (
+                    <span aria-label="Duración elevada">⏳</span>
+                  )}
+
                   {r.durationTrend === "up" && (
                     <span
                       title="Tardó >20% más que el anterior"
@@ -538,7 +562,10 @@ return (
 
               <div className="mobile-job-meta-item">
                 <span className="mobile-job-meta-label">Duración</span>
-                <span className="mobile-job-meta-value">{r.duration ?? "—"}</span>
+                <span className="mobile-job-meta-value">
+                  {r.duration ?? "—"}
+                  {slowestJobIds.has(r.jobId) && " ⏳"}
+                </span>
               </div>
             </div>
 
