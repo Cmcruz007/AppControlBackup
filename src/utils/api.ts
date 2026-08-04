@@ -15,7 +15,7 @@ const LS_KEY = 'bm.authToken'
 // Flag para activar/desactivar Entra ID.
 // - "0" (default) = Token clásico.
 // - "1" = Entra ID (usa MSAL access token).
-const USE_ENTRA = ((import.meta as any).env?.VITE_BM_USE_ENTRA ?? "0") === "1"
+const USE_ENTRA = import.meta.env.VITE_BM_USE_ENTRA === "1"
 
 function getLocalToken(): string {
   try {

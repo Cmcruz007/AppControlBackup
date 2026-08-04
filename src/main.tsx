@@ -11,8 +11,7 @@ import "./mobile.css"
 // - "0" = Token clásico (BM_AUTH_TOKEN) — modo actual por defecto.
 // - "1" = Entra ID (Microsoft 365 SSO) — activar solo cuando Redirect URI
 //         esté en modo SPA en Entra ID.
-const USE_ENTRA = ((import.meta as any).env?.VITE_BM_USE_ENTRA ?? "0") === "1"
-
+const USE_ENTRA = import.meta.env.VITE_BM_USE_ENTRA === "1"
 async function bootstrap() {
   if (USE_ENTRA) {
     try {

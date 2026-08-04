@@ -37,7 +37,7 @@ import VersionModal from "./components/VersionModal"
 import { APP_VERSION } from "./version"
 
 // Flag para diferenciar entre modo Entra ID (SSO+MFA) y Token clásico.
-const USE_ENTRA = ((import.meta as any).env?.VITE_BM_USE_ENTRA ?? "0") === "1"
+const USE_ENTRA = import.meta.env.VITE_BM_USE_ENTRA === "1"
 
 async function handleExportScheduleExcel() {
   try {
