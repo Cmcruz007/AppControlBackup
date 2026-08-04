@@ -58,6 +58,7 @@ type ResizableColumnKey =
   | "status"
   | "source"
   | "nextRun"
+  | "endTime"
   | "duration"
   | "reason"
   | "accion"
@@ -69,6 +70,7 @@ const DEFAULT_COLUMN_WIDTHS: Record<ResizableColumnKey, number> = {
   status: 110,
   source: 90,
   nextRun: 190,
+  endTime: 190,
   duration: 130,
   reason: 280,
   accion: 175,
@@ -79,6 +81,7 @@ const MIN_COLUMN_WIDTHS: Record<ResizableColumnKey, number> = {
   status: 90,
   source: 70,
   nextRun: 140,
+  endTime: 140,
   duration: 90,
   reason: 140,
   accion: 130,
@@ -252,6 +255,7 @@ return (
         <col style={{ width: columnWidths.status }} />
         <col style={{ width: columnWidths.source }} />
         <col style={{ width: columnWidths.nextRun }} />
+        <col style={{ width: columnWidths.endTime }} />
         <col style={{ width: columnWidths.duration }} />
         <col style={{ width: columnWidths.reason }} />
         {!readOnly && <col style={{ width: columnWidths.accion }} />}
@@ -277,6 +281,11 @@ return (
           <th className="sortable" onClick={() => onSort("nextRun")} style={{ position: "relative" }}>
             Inicio {sortKey === "nextRun" ? (sortDir === "asc" ? "▲" : "▼") : ""}
             <ResizeHandle col="nextRun" />
+          </th>
+
+          <th style={{ position: "relative" }}>
+            Fin
+            <ResizeHandle col="endTime" />
           </th>
 
           <th style={{ position: "relative" }}>
@@ -402,6 +411,10 @@ return (
                 })()}
               </td>
 
+              <td className="tabular" style={{ whiteSpace: "nowrap" }}>
+                {r.endTimeDisplay ?? "—"}
+              </td>
+
               <td className="tabular">
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <span style={{ minWidth: "45px" }}>{r.duration ?? "—"}</span>
@@ -516,6 +529,11 @@ return (
               <div className="mobile-job-meta-item">
                 <span className="mobile-job-meta-label">Inicio</span>
                 <span className="mobile-job-meta-value">{startText}</span>
+              </div>
+
+              <div className="mobile-job-meta-item">
+                <span className="mobile-job-meta-label">Fin</span>
+                <span className="mobile-job-meta-value">{r.endTimeDisplay ?? "—"}</span>
               </div>
 
               <div className="mobile-job-meta-item">
