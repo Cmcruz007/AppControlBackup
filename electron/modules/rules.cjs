@@ -127,7 +127,7 @@ async function evaluateVdcRule(rule, emails, inicio, fin, cfg, criticalityByJob)
       const matchSubject = rule.subjectContains ? includesCI(m.subject, rule.subjectContains) : true
       return matchSender && matchSubject
     })
-    .sort((a, b) => new Date(b.receivedDateTime).getTime() - new Date(a.receivedDateTime).getTime())
+    .sort((a, b) => new Date(a.receivedDateTime).getTime() - new Date(b.receivedDateTime).getTime())
 
   const chosen = inWindow[0] || null
   let status = 'pending', reason = 'Pendiente Recepcion'
