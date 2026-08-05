@@ -30,7 +30,6 @@ export default function ExecutionsTab({
 
   function normalizeJobName(value: any): string {
     if (typeof value === "string") return value.trim()
-
     return String(
       value?.jobName ||
       value?.name ||
@@ -44,12 +43,10 @@ export default function ExecutionsTab({
 
   function uniqueSorted(values: any[]): string[] {
     const set = new Set<string>()
-
     for (const value of values || []) {
       const name = normalizeJobName(value)
       if (name) set.add(name)
     }
-
     return Array.from(set).sort((a, b) =>
       String(a).localeCompare(String(b), "es", { sensitivity: "base" })
     )
@@ -64,7 +61,6 @@ export default function ExecutionsTab({
 
       try {
         const jobsRes = await api().listJobs()
-
         if ((jobsRes as any)?.ok && Array.isArray((jobsRes as any).jobs)) {
           collected.push(...(jobsRes as any).jobs)
         }
@@ -74,15 +70,12 @@ export default function ExecutionsTab({
 
       try {
         const refreshRes = await api().refresh()
-
         const fullRows = Array.isArray((refreshRes as any)?.fullRows)
           ? (refreshRes as any).fullRows
           : []
-
         const rows = Array.isArray((refreshRes as any)?.rows)
           ? (refreshRes as any).rows
           : []
-
         collected.push(...fullRows)
         collected.push(...rows)
       } catch {
@@ -90,7 +83,6 @@ export default function ExecutionsTab({
       }
 
       const nextNames = uniqueSorted(collected)
-
       setDirectoryNames(nextNames)
 
       if (nextNames.length === 0) {
@@ -106,7 +98,6 @@ export default function ExecutionsTab({
 
   useEffect(() => {
     const names = uniqueSorted(allJobNames || [])
-
     if (names.length > 0) {
       setDirectoryNames(names)
       setDirectoryError(null)
@@ -122,23 +113,17 @@ export default function ExecutionsTab({
 
   const filteredJobNames = useMemo(() => {
     const q = search.trim().toLowerCase()
-
     const source = directoryNames.length > 0
       ? directoryNames
       : uniqueSorted(allJobNames || [])
-
     if (!q) return source
-
     return source.filter((name) => name.toLowerCase().includes(q))
   }, [directoryNames, allJobNames, search])
 
   function formatDate(value: any): string {
     if (!value) return "—"
-
     const d = new Date(value)
-
     if (Number.isNaN(d.getTime())) return String(value)
-
     return d.toLocaleDateString("es-ES", {
       day: "2-digit",
       month: "2-digit",
@@ -148,11 +133,8 @@ export default function ExecutionsTab({
 
   function formatTime(value: any): string {
     if (!value) return "—"
-
     const d = new Date(value)
-
     if (Number.isNaN(d.getTime())) return String(value)
-
     return d.toLocaleTimeString("es-ES", {
       hour: "2-digit",
       minute: "2-digit",
@@ -160,9 +142,41 @@ export default function ExecutionsTab({
     })
   }
 
-  function formatDuration(ms: any): string {
-    const n = Number(ms)
+  // La duración llega en dos formatos distintos segun el origen del job:
+  // - AS400/Barracuda (electron/modules/graph.cjs): numero en milisegundos
+  //   (durationMs), o null si no se pudo calcular.
+  // - Veeam/VDC-SQL (electron/modules/sql.cjs): STRING ya formateado por
+  //   formatDurationMs(), tipo "01:32:39" o "32:39" (o '' si no hay dato).
+  // Antes solo se contemplaba el caso numerico (Number(ms)), por lo que
+  // Number("01:32:39") daba NaN y la celda siempre mostraba "—" para TODOS
+  // los jobs Veeam/VDC-SQL, aunque el dato sí existiera. Ahora se detecta el
+  // tipo y se formatea cada caso, sin tocar ninguno de los dos backends.
+  function formatDuration(value: any): string {
+    if (typeof value === "string") {
+      const trimmed = value.trim()
+      if (!trimmed) return "—"
 
+      const parts = trimmed.split(":").map((p) => parseInt(p, 10))
+      if (parts.some((p) => Number.isNaN(p))) return "—"
+
+      let h = 0
+      let m = 0
+      let s = 0
+
+      if (parts.length === 3) {
+        [h, m, s] = parts
+      } else if (parts.length === 2) {
+        [m, s] = parts
+      } else {
+        return "—"
+      }
+
+      if (h > 0) return `${h}h ${String(m).padStart(2, "0")}m ${String(s).padStart(2, "0")}s`
+      if (m > 0) return `${m}m ${String(s).padStart(2, "0")}s`
+      return `${s}s`
+    }
+
+    const n = Number(value)
     if (!Number.isFinite(n) || n <= 0) return "—"
 
     const totalSeconds = Math.round(n / 1000)
@@ -172,26 +186,22 @@ export default function ExecutionsTab({
 
     if (h > 0) return `${h}h ${String(m).padStart(2, "0")}m ${String(s).padStart(2, "0")}s`
     if (m > 0) return `${m}m ${String(s).padStart(2, "0")}s`
-
     return `${s}s`
   }
 
   function statusLabel(status: any): string {
     const s = String(status || "").toLowerCase()
-
     if (s === "success") return "SUCCESS"
     if (s === "warning") return "WARNING"
     if (s === "failed") return "ERROR"
     if (s === "running") return "RUNNING"
     if (s === "pending") return "PENDING"
-
     return String(status || "—").toUpperCase()
   }
 
   // ─────────────────────────────────────────────────────────────
   // Directorio de jobs
   // ─────────────────────────────────────────────────────────────
-
   if (!jobName) {
     return (
       <div
@@ -317,7 +327,6 @@ export default function ExecutionsTab({
                   >
                     {name}
                   </td>
-
                   <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
                     <button
                       type="button"
@@ -344,7 +353,6 @@ export default function ExecutionsTab({
   // ─────────────────────────────────────────────────────────────
   // Historial de un job
   // ─────────────────────────────────────────────────────────────
-
   const executions = Array.isArray((data as any)?.executions)
     ? (data as any).executions
     : []
