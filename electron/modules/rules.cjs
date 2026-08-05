@@ -1,5 +1,5 @@
 // electron/modules/rules.cjs
-const { includesCI, pad2, lookupCriticality } = require('./utils.cjs')
+const { includesCI, pad2, lookupCriticality, formatDurationMs } = require('./utils.cjs')
 const { fetchAs400Attachment, getMessageBody, cleanBarracudaFooter, parseBarracudaBody } = require('./graph.cjs')
 
 function buildVdcEmailStatus(rule, email) {
@@ -161,7 +161,7 @@ async function evaluateBarracudaRule(rule, emails, inicio, fin, cfg, criticality
     startTime: parsed?.startTime ?? null,
     endTime: parsed?.endTime ?? chosen?.receivedDateTime ?? null,
     startTimeDisplay: fStart, endTimeDisplay: fEnd,
-    duration: '',
+    duration: parsed?.durationMs ? formatDurationMs(parsed.durationMs) : '',
     status, reason,
     durationMs: parsed?.durationMs ?? null,
     durationTrend: null, relaunched: false,
