@@ -294,7 +294,7 @@ return (
       <thead>
         <tr>
           <th className="sortable" onClick={() => onSort("jobName")} style={{ position: "relative" }}>
-            Job {sortKey === "jobName" ? (sortDir === "asc" ? "▲" : "▼") : ""}
+            Prioridad - Job {sortKey === "jobName" ? (sortDir === "asc" ? "▲" : "▼") : ""}
             <ResizeHandle col="jobName" />
           </th>
 
