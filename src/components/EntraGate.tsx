@@ -133,45 +133,10 @@ export default function EntraGate({ children }: { children: React.ReactNode }) {
     )
   }
 
-  return (
-    <>
-      <div
-        style={{
-          position: "fixed",
-          right: 14,
-          bottom: 14,
-          zIndex: 9998,
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          background: "rgba(15,23,42,.92)",
-          border: "1px solid rgba(96,165,250,.35)",
-          borderRadius: 999,
-          padding: "6px 10px",
-          color: "#cbd5e1",
-          fontSize: 12,
-        }}
-      >
-        <span>{accounts[0]?.username}</span>
-
-        <button
-          type="button"
-          onClick={logout}
-          style={{
-            background: "rgba(239,68,68,.15)",
-            border: "1px solid rgba(239,68,68,.35)",
-            color: "#fecaca",
-            borderRadius: 999,
-            padding: "3px 8px",
-            cursor: "pointer",
-            fontSize: 11,
-          }}
-        >
-          Salir
-        </button>
-      </div>
-
-      {children}
-    </>
-  )
+  // El badge de usuario (email + boton "Salir") se pinta ahora dentro de la
+  // topbar de <App/>, junto al texto "Actualizado hh:mm:ss" (ver App.tsx).
+  // Antes vivia aqui como <div style={{ position: "fixed", bottom: 14 }}>,
+  // pero al ir anclado abajo a la derecha se superponia con los botones de
+  // accion de la tabla en resoluciones de portatil/tablet.
+  return <>{children}</>
 }

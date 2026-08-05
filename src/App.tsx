@@ -355,7 +355,19 @@ function computeB2Kpis(inputRows: JobRowUi[]) {
   return kpis
 }
 
-export default function App() {
+// Props opcionales de Entra ID: solo se pasan desde main.tsx cuando
+// USE_ENTRA=1 (ver AppWithMsal en main.tsx). En modo Token clasico
+// (USE_ENTRA=0) llegan como undefined y el badge simplemente no se pinta.
+// Importante: App.tsx NO debe llamar a useMsal() directamente, porque en
+// modo Token clasico se monta sin <MsalProvider/> alrededor y el hook
+// lanzaria un error.
+export default function App({
+  entraUsername = null,
+  onEntraLogout,
+}: {
+  entraUsername?: string | null
+  onEntraLogout?: () => void
+} = {}) {
   const [tab, setTab] = useState<Tab>("dashboard")
   const [activeCategory, setActiveCategory] = useState<CategoryFilter>("all")
   const [config, setConfig] = useState<AppConfig | null>(null)
@@ -824,6 +836,10 @@ export default function App() {
     }
   }
 
+  async function handleEntraLogout() {
+    await onEntraLogout?.()
+  }
+
   function handleDashboardKpiClick(next: DashboardKpiFilter) {
     setStatusFilter(next)
     setShowAll(true)
@@ -976,8 +992,44 @@ export default function App() {
             </button>
           </h1>
 
-          <div className="meta">
-            {lastRun ? `Actualizado ${new Date(lastRun).toLocaleTimeString("es-ES")}` : "Cargando..."}
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <div className="meta">
+              {lastRun ? `Actualizado ${new Date(lastRun).toLocaleTimeString("es-ES")}` : "Cargando..."}
+            </div>
+
+            {entraUsername && (
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  background: "rgba(15,23,42,.92)",
+                  border: "1px solid rgba(96,165,250,.35)",
+                  borderRadius: 999,
+                  padding: "6px 10px",
+                  color: "#cbd5e1",
+                  fontSize: 12,
+                }}
+              >
+                <span>{entraUsername}</span>
+
+                <button
+                  type="button"
+                  onClick={handleEntraLogout}
+                  style={{
+                    background: "rgba(239,68,68,.15)",
+                    border: "1px solid rgba(239,68,68,.35)",
+                    color: "#fecaca",
+                    borderRadius: 999,
+                    padding: "3px 8px",
+                    cursor: "pointer",
+                    fontSize: 11,
+                  }}
+                >
+                  Salir
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
