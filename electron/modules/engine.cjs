@@ -33,7 +33,7 @@ function buildRow(s, emails, ahora, criticalityByJob) {
   let status = 'running'
   let reason = 'En ejecucion'
 
-  const rawEnd = email?.receivedDateTime || s.end_time || s.endtime || s.lastRun
+  const rawEnd = s.end_time || s.endtime || s.lastRun || email?.receivedDateTime
   let puntoFinal = rawEnd ? new Date(rawEnd) : null
   if (puntoFinal && puntoFinal.getFullYear() < 2000) puntoFinal = null
 

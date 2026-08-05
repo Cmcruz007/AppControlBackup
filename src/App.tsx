@@ -771,6 +771,12 @@ export default function App() {
             return safeLower(r.jobName)
           case "nextRun":
             return r.nextRun ? new Date(r.nextRun).getTime() : 0
+          case "endTime": {
+            const endValue = (r as any).endTime ?? r.lastRun ?? (r as any).endTimeDisplay
+            if (!endValue) return -1
+            const endTime = new Date(endValue).getTime()
+            return Number.isNaN(endTime) ? -1 : endTime
+          }
           case "source":
             return sourceRank(r.source)
           case "duration":

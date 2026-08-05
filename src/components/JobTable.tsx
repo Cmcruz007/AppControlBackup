@@ -50,6 +50,16 @@ function getVisibleDetail(row: any): string {
   return String(row?.detail || row?.reason || "")
 }
 
+function formatDateTime(value: unknown): string {
+  if (!value) return "—"
+  const date = new Date(String(value))
+  if (isNaN(date.getTime())) return String(value)
+  return date.toLocaleString("es-ES", {
+    day: "2-digit", month: "2-digit", year: "numeric",
+    hour: "2-digit", minute: "2-digit",
+  })
+}
+
 // --- Columnas redimensionables (Directorio de Jobs / Dashboard) ---------
 // El ancho de cada columna se puede arrastrar desde el borde derecho de la
 // cabecera y se recuerda entre sesiones en localStorage (por navegador).
@@ -303,13 +313,13 @@ return (
             <ResizeHandle col="nextRun" />
           </th>
 
-          <th style={{ position: "relative" }}>
-            Fin
+          <th className="sortable" onClick={() => onSort("endTime")} style={{ position: "relative" }}>
+            Fin {sortKey === "endTime" ? (sortDir === "asc" ? "▲" : "▼") : ""}
             <ResizeHandle col="endTime" />
           </th>
 
-          <th style={{ position: "relative" }}>
-            Duración
+          <th className="sortable" onClick={() => onSort("duration")} style={{ position: "relative" }}>
+            Duración {sortKey === "duration" ? (sortDir === "asc" ? "▲" : "▼") : ""}
             <ResizeHandle col="duration" />
           </th>
 
@@ -413,35 +423,17 @@ return (
               </td>
 
               <td className="tabular" style={{ whiteSpace: "nowrap" }}>
-                {(() => {
-                  const val = r.nextRun ?? r.startTime
-                  if (!val) return "—"
-
-                  const d = new Date(val)
-
-                  return isNaN(d.getTime())
-                    ? String(val)
-                    : d.toLocaleString("es-ES", {
-                        day: "2-digit",
-                        month: "2-digit",
-                        year: "numeric",
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })
-                })()}
+                {formatDateTime(r.nextRun ?? r.startTime)}
               </td>
 
               <td className="tabular" style={{ whiteSpace: "nowrap" }}>
-                {r.endTimeDisplay ?? "—"}
+                {formatDateTime(r.endTime ?? r.lastRun ?? r.endTimeDisplay)}
               </td>
 
               <td className="tabular">
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <span style={{ minWidth: "45px" }}>{r.duration ?? "—"}</span>
 
-                  {slowestJobIds.has(r.jobId) && (
-                    <span aria-label="Duración elevada">⏳</span>
-                  )}
 
                   {r.durationTrend === "up" && (
                     <span
@@ -468,6 +460,9 @@ return (
                     >
                       =
                     </span>
+                  )}
+                  {slowestJobIds.has(r.jobId) && (
+                    <span aria-label="Duración elevada">⏳</span>
                   )}
                 </div>
               </td>
@@ -506,22 +501,8 @@ return (
         const statusClass = getStatusClass(r)
         const displayReason = getVisibleDetail(r)
 
-        const val = r.nextRun ?? r.startTime
-        let startText = "—"
-
-        if (val) {
-          const d = new Date(val)
-
-          startText = isNaN(d.getTime())
-            ? String(val)
-            : d.toLocaleString("es-ES", {
-                day: "2-digit",
-                month: "2-digit",
-                year: "numeric",
-                hour: "2-digit",
-                minute: "2-digit",
-              })
-        }
+        const startText = formatDateTime(r.nextRun ?? r.startTime)
+        const endText = formatDateTime(r.endTime ?? r.lastRun ?? r.endTimeDisplay)
 
         return (
           <article key={r.jobId} className={`mobile-job-card row-${statusClass}`}>
@@ -557,7 +538,7 @@ return (
 
               <div className="mobile-job-meta-item">
                 <span className="mobile-job-meta-label">Fin</span>
-                <span className="mobile-job-meta-value">{r.endTimeDisplay ?? "—"}</span>
+                <span className="mobile-job-meta-value">{endText}</span>
               </div>
 
               <div className="mobile-job-meta-item">
