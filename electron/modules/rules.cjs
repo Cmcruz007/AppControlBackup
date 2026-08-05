@@ -1,6 +1,6 @@
 // electron/modules/rules.cjs
 const { includesCI, pad2, lookupCriticality, formatDurationMs } = require('./utils.cjs')
-const { fetchAs400Attachment, getMessageBody, cleanBarracudaFooter, parseBarracudaBody } = require('./graph.cjs')
+const { fetchAs400Attachment, getMessageBody, cleanBarracudaFooter, parseBarracudaBody, cleanVdcFooter, parseVdcBody } = require('./graph.cjs')
 
 function buildVdcEmailStatus(rule, email) {
   if (!email) return 'failed'
@@ -101,10 +101,99 @@ function evaluateAs400Rule(rule, emails, inicio, fin, criticalityByJob) {
   }
 }
 
-function buildVdcRows(rules, emails, inicio, fin, defaultSender = '', criticalityByJob = {}) {
-  return (Array.isArray(rules) ? rules : [])
+const VDC_FIXED_SCHEDULE = {
+  'VDC EXCHANGE': { hh: 1, mm: 30 },
+  'VDC ONEDRIVE': { hh: 2, mm: 30 },
+  'VDC SHAREPOINT Y TEAMS': { hh: 22, mm: 0 },
+}
+
+function computeVdcFixedStart(inicio, rule) {
+  const key = String(rule?.title || '').trim().toUpperCase()
+  const sched = VDC_FIXED_SCHEDULE[key]
+  if (!sched) return null
+
+  const start = inicio instanceof Date ? inicio : new Date(inicio)
+  const candidate = new Date(start.getFullYear(), start.getMonth(), start.getDate(), sched.hh, sched.mm, 0, 0)
+  if (candidate < start) candidate.setDate(candidate.getDate() + 1)
+  return candidate
+}
+
+async function evaluateVdcRule(rule, emails, inicio, fin, cfg, criticalityByJob) {
+  const inWindow = (Array.isArray(emails) ? emails : [])
+    .filter((m) => {
+      const sender = m?.sender?.emailAddress?.address || ''
+      const from = m?.from?.emailAddress?.address || ''
+      const matchSender = rule.sender ? includesCI(sender, rule.sender) || includesCI(from, rule.sender) : true
+      const matchSubject = rule.subjectContains ? includesCI(m.subject, rule.subjectContains) : true
+      return matchSender && matchSubject
+    })
+    .sort((a, b) => new Date(b.receivedDateTime).getTime() - new Date(a.receivedDateTime).getTime())
+
+  const chosen = inWindow[0] || null
+  let status = 'pending', reason = 'Pendiente Recepcion'
+  let parsed = null
+
+  if (chosen) {
+    reason = 'Correo Recibido'
+    try {
+      let bodyContent = await getMessageBody(cfg, chosen.id)
+      bodyContent = cleanVdcFooter(bodyContent)
+      parsed = parseVdcBody(chosen, bodyContent)
+    } catch (err) {
+      parsed = null
+    }
+
+    if (parsed?.status) {
+      status = parsed.status
+    } else {
+      const text = `${chosen.subject || ''}
+${chosen.bodyPreview || ''}`.toLowerCase()
+      const hasError = rule.errorWord && includesCI(text, rule.errorWord)
+      const hasSuccess = rule.successWord && includesCI(text, rule.successWord)
+      if (hasError) status = 'failed'
+      else if (hasSuccess) status = 'success'
+      else status = 'warning'
+    }
+  }
+
+  const jobName = rule.title ? rule.title : `[VDC] ${rule.subjectContains || rule.sender || rule.id}`
+  const fixedStart = computeVdcFixedStart(inicio, rule)
+  const endDate = parsed?.endTime ? new Date(parsed.endTime) : (chosen?.receivedDateTime ? new Date(chosen.receivedDateTime) : null)
+
+  let fStart = ''
+  if (fixedStart && !Number.isNaN(fixedStart.getTime())) fStart = `${pad2(fixedStart.getHours())}:${pad2(fixedStart.getMinutes())}`
+  let fEnd = ''
+  if (endDate && !Number.isNaN(endDate.getTime())) fEnd = `${pad2(endDate.getHours())}:${pad2(endDate.getMinutes())}`
+
+  let durationMs = null
+  if (fixedStart && endDate && !Number.isNaN(fixedStart.getTime()) && !Number.isNaN(endDate.getTime())) {
+    const diff = endDate.getTime() - fixedStart.getTime()
+    durationMs = diff >= 0 ? diff : null
+  }
+
+  return {
+    jobId: `vdc:${rule.id}`, jobName,
+    nextRun: inicio.toISOString(), lastRun: chosen?.receivedDateTime ?? null,
+    lastResult: null,
+    startTime: fixedStart ? fixedStart.toISOString() : null,
+    endTime: parsed?.endTime ?? chosen?.receivedDateTime ?? null,
+    startTimeDisplay: fStart, endTimeDisplay: fEnd,
+    duration: durationMs ? formatDurationMs(durationMs) : '',
+    status, reason,
+    durationMs,
+    durationTrend: null, relaunched: false,
+    email: chosen ? { subject: chosen.subject, date: chosen.receivedDateTime } : null,
+    allEmails: inWindow.map((e) => ({ subject: e.subject, date: e.receivedDateTime, status: buildVdcEmailStatus(rule, e) })),
+    criticality: lookupCriticality(jobName, criticalityByJob), source: 'vdc', category: 'vdc', sender: rule.sender,
+  }
+}
+
+async function buildVdcRows(rules, emails, inicio, fin, cfg, defaultSender = '', criticalityByJob = {}) {
+  const candidates = (Array.isArray(rules) ? rules : [])
     .filter((r) => r.enabled && (r.sender || defaultSender || r.subjectContains))
-    .map((r) => evaluateEmailRule({ ...r, sender: r.sender || defaultSender }, emails, inicio, fin, 'VDC', criticalityByJob, 'vdc'))
+  return Promise.all(
+    candidates.map((r) => evaluateVdcRule({ ...r, sender: r.sender || defaultSender }, emails, inicio, fin, cfg, criticalityByJob))
+  )
 }
 
 async function evaluateBarracudaRule(rule, emails, inicio, fin, cfg, criticalityByJob) {

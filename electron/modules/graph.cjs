@@ -387,18 +387,39 @@ function parseBarracudaBody(body) {
  *   Solo podemos inferir el estado del subject/bodyPreview.
  *   Start/End/Duration: null (limitación documentada).
  */
-function parseVdcBody(message) {
-  const text = `${message?.subject || ''} ${message?.bodyPreview || ''}`.toLowerCase()
+function parseVdcBody(message, bodyContent = '') {
+  const subjectPreview = `${message?.subject || ''} ${message?.bodyPreview || ''}`.toLowerCase()
+  const fullText = `${subjectPreview} ${String(bodyContent || '')}`.toLowerCase()
 
   let status = 'success'
 
-  if (text.includes('failed') || text.includes('error')) status = 'failed'
-  else if (text.includes('warning')) status = 'warning'
-  else if (text.includes('successfully')) status = 'success'
+  if (fullText.includes('failed') || fullText.includes('error')) status = 'failed'
+  else if (fullText.includes('warning')) status = 'warning'
+  else if (fullText.includes('successfully')) status = 'success'
+
+  // Ej: "finished on Wed Aug 05 2026 00:58:14 UTC"
+  let endTime = null
+  const clean = String(bodyContent || '').replace(/\s+/g, ' ').trim()
+  const finishedMatch = clean.match(/finished on\s+\w+\s+(\w+)\s+(\d{1,2})\s+(\d{4})\s+(\d{2}):(\d{2}):(\d{2})\s+UTC/i)
+
+  if (finishedMatch) {
+    const months = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 }
+    const monthKey = finishedMatch[1].slice(0, 3).toLowerCase()
+    const month = months[monthKey]
+
+    if (month !== undefined) {
+      const day = parseInt(finishedMatch[2], 10)
+      const year = parseInt(finishedMatch[3], 10)
+      const hh = parseInt(finishedMatch[4], 10)
+      const mi = parseInt(finishedMatch[5], 10)
+      const ss = parseInt(finishedMatch[6], 10)
+      endTime = new Date(Date.UTC(year, month, day, hh, mi, ss))
+    }
+  }
 
   return {
     startTime: null,
-    endTime: null,
+    endTime: endTime ? endTime.toISOString() : null,
     durationMs: null,
     status,
   }

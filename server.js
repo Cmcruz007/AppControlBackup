@@ -613,13 +613,16 @@ async function buildRefreshPayloadForWindow(cfg, inicio, fin, includeSql = true)
     criticalityByJob
   )
 
-  const vdcRows = buildVdcRows(
-    vdcRules,
-    emails || [],
-    inicio,
-    fin,
-    '',
-    criticalityByJob
+  const vdcRows = (
+    await buildVdcRows(
+      vdcRules,
+      emails || [],
+      inicio,
+      fin,
+      cfg,
+      '',
+      criticalityByJob
+    )
   ).map((r) => ({
     ...applyManualOverride(r, overrides, ahora),
     source: 'vdc',
