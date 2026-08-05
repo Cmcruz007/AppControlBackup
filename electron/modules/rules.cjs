@@ -1,6 +1,6 @@
 // electron/modules/rules.cjs
 const { includesCI, pad2, lookupCriticality } = require('./utils.cjs')
-const { fetchAs400Attachment } = require('./graph.cjs')
+const { fetchAs400Attachment, getMessageBody, cleanBarracudaFooter, parseBarracudaBody } = require('./graph.cjs')
 
 function buildVdcEmailStatus(rule, email) {
   if (!email) return 'failed'
@@ -10,8 +10,8 @@ function buildVdcEmailStatus(rule, email) {
   return 'failed'
 }
 
-function evaluateEmailRule(rule, emails, inicio, fin, defaultPrefix, criticalityByJob) {  
-const inWindow = (Array.isArray(emails) ? emails : [])
+function evaluateEmailRule(rule, emails, inicio, fin, defaultPrefix, criticalityByJob, sourceName = 'email') {
+  const inWindow = (Array.isArray(emails) ? emails : [])
     .filter((m) => {
       const sender = m?.sender?.emailAddress?.address || ''
       const from = m?.from?.emailAddress?.address || ''
@@ -47,7 +47,7 @@ const inWindow = (Array.isArray(emails) ? emails : [])
     status, reason, durationMs: null, durationTrend: null, relaunched: false,
     email: chosen ? { subject: chosen.subject, date: chosen.receivedDateTime } : null,
     allEmails: inWindow.map((e) => ({ subject: e.subject, date: e.receivedDateTime, status: buildVdcEmailStatus(rule, e) })),
-    criticality: lookupCriticality(jobName, criticalityByJob), source: 'email', sender: rule.sender,
+    criticality: lookupCriticality(jobName, criticalityByJob), source: sourceName, category: sourceName, sender: rule.sender,
   }
 }
 
@@ -97,20 +97,86 @@ function evaluateAs400Rule(rule, emails, inicio, fin, criticalityByJob) {
     durationMs: null, durationTrend: null, relaunched: false,
     email: chosen ? { subject: chosen.subject, date: chosen.receivedDateTime } : null,
     allEmails: inWindow.map((e) => ({ subject: e.subject, date: e.receivedDateTime, status: 'success' })),
-    criticality: lookupCriticality(rule.title || rule.name, criticalityByJob), source: 'email', notes: rule.notes || '',
+    criticality: lookupCriticality(rule.title || rule.name, criticalityByJob), source: 'as400', category: 'as400', notes: rule.notes || '',
   }
 }
 
 function buildVdcRows(rules, emails, inicio, fin, defaultSender = '', criticalityByJob = {}) {
   return (Array.isArray(rules) ? rules : [])
     .filter((r) => r.enabled && (r.sender || defaultSender || r.subjectContains))
-    .map((r) => evaluateEmailRule({ ...r, sender: r.sender || defaultSender }, emails, inicio, fin, 'VDC', criticalityByJob))
+    .map((r) => evaluateEmailRule({ ...r, sender: r.sender || defaultSender }, emails, inicio, fin, 'VDC', criticalityByJob, 'vdc'))
 }
 
-function buildBarracudaRows(rules, emails, inicio, fin, defaultSender = '', criticalityByJob = {}) {
-  return (Array.isArray(rules) ? rules : [])
+async function evaluateBarracudaRule(rule, emails, inicio, fin, cfg, criticalityByJob) {
+  const inWindow = (Array.isArray(emails) ? emails : [])
+    .filter((m) => {
+      const sender = m?.sender?.emailAddress?.address || ''
+      const from = m?.from?.emailAddress?.address || ''
+      const matchSender = rule.sender ? includesCI(sender, rule.sender) || includesCI(from, rule.sender) : true
+      const matchSubject = rule.subjectContains ? includesCI(m.subject, rule.subjectContains) : true
+      return matchSender && matchSubject
+    })
+    .sort((a, b) => new Date(b.receivedDateTime).getTime() - new Date(a.receivedDateTime).getTime())
+
+  const chosen = inWindow[0] || null
+  let status = 'pending', reason = 'Pendiente Recepcion'
+  let parsed = null
+
+  if (chosen) {
+    reason = 'Correo Recibido'
+    try {
+      let bodyContent = await getMessageBody(cfg, chosen.id)
+      bodyContent = cleanBarracudaFooter(bodyContent)
+      parsed = parseBarracudaBody(bodyContent)
+    } catch (err) {
+      parsed = null
+    }
+
+    if (parsed?.status) {
+      status = parsed.status
+    } else {
+      const text = `${chosen.subject || ''}\n${chosen.bodyPreview || ''}`.toLowerCase()
+      const hasError = rule.errorWord && includesCI(text, rule.errorWord)
+      const hasSuccess = rule.successWord && includesCI(text, rule.successWord)
+      if (hasError) status = 'failed'
+      else if (hasSuccess) status = 'success'
+      else status = 'warning'
+    }
+  }
+
+  const jobName = rule.title ? rule.title : `[BARRACUDA] ${rule.subjectContains || rule.sender || rule.id}`
+
+  const startDate = parsed?.startTime ? new Date(parsed.startTime) : null
+  const endDate = parsed?.endTime ? new Date(parsed.endTime) : (chosen?.receivedDateTime ? new Date(chosen.receivedDateTime) : null)
+
+  let fStart = ''
+  if (startDate && !Number.isNaN(startDate.getTime())) fStart = `${pad2(startDate.getHours())}:${pad2(startDate.getMinutes())}`
+  let fEnd = ''
+  if (endDate && !Number.isNaN(endDate.getTime())) fEnd = `${pad2(endDate.getHours())}:${pad2(endDate.getMinutes())}`
+
+  return {
+    jobId: `barracuda:${rule.id}`, jobName,
+    nextRun: inicio.toISOString(), lastRun: chosen?.receivedDateTime ?? null,
+    lastResult: null,
+    startTime: parsed?.startTime ?? null,
+    endTime: parsed?.endTime ?? chosen?.receivedDateTime ?? null,
+    startTimeDisplay: fStart, endTimeDisplay: fEnd,
+    duration: '',
+    status, reason,
+    durationMs: parsed?.durationMs ?? null,
+    durationTrend: null, relaunched: false,
+    email: chosen ? { subject: chosen.subject, date: chosen.receivedDateTime } : null,
+    allEmails: inWindow.map((e) => ({ subject: e.subject, date: e.receivedDateTime, status: buildVdcEmailStatus(rule, e) })),
+    criticality: lookupCriticality(jobName, criticalityByJob), source: 'barracuda', category: 'barracuda', sender: rule.sender,
+  }
+}
+
+async function buildBarracudaRows(rules, emails, inicio, fin, cfg, defaultSender = '', criticalityByJob = {}) {
+  const candidates = (Array.isArray(rules) ? rules : [])
     .filter((r) => r.enabled && (r.sender || defaultSender || r.subjectContains))
-   .map((r) => evaluateEmailRule({ ...r, sender: r.sender || defaultSender }, emails, inicio, fin, 'BARRACUDA', criticalityByJob))
+  return Promise.all(
+    candidates.map((r) => evaluateBarracudaRule({ ...r, sender: r.sender || defaultSender }, emails, inicio, fin, cfg, criticalityByJob))
+  )
 }
 
 async function buildAs400Rows(rules, emails, inicio, fin, cfg, criticalityByJob = {}) {

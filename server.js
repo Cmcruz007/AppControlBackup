@@ -627,13 +627,16 @@ async function buildRefreshPayloadForWindow(cfg, inicio, fin, includeSql = true)
     type: 'vdc',
   }))
 
-  const barraRows = buildBarracudaRows(
-    barracudaRules,
-    emails || [],
-    inicio,
-    fin,
-    '',
-    criticalityByJob
+  const barraRows = (
+    await buildBarracudaRows(
+      barracudaRules,
+      emails || [],
+      inicio,
+      fin,
+      cfg,
+      '',
+      criticalityByJob
+    )
   ).map((r) => ({
     ...applyManualOverride(r, overrides, ahora),
     source: 'barracuda',

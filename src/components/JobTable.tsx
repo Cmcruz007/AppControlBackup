@@ -423,7 +423,7 @@ return (
               </td>
 
               <td className="tabular" style={{ whiteSpace: "nowrap" }}>
-                {formatDateTime(r.nextRun ?? r.startTime)}
+                {formatDateTime(r.startTime ?? r.nextRun)}
               </td>
 
               <td className="tabular" style={{ whiteSpace: "nowrap" }}>
@@ -501,7 +501,7 @@ return (
         const statusClass = getStatusClass(r)
         const displayReason = getVisibleDetail(r)
 
-        const startText = formatDateTime(r.nextRun ?? r.startTime)
+        const startText = formatDateTime(r.startTime ?? r.nextRun)
         const endText = formatDateTime(r.endTime ?? r.lastRun ?? r.endTimeDisplay)
 
         return (
