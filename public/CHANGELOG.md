@@ -1,36 +1,5 @@
 ### Changelog
 
-#### [8.0.0] - 2026-08-04
-
-##### 🚀 Versión mayor
-- Cierre del bloque de fiabilidad de KPIs para jobs AS400 de comprobación manual (Backup AS400 SD/PR/RR/SDB-TGT), tras detectar que un override manual de un día anterior podía "heredarse" indebidamente al día en curso.
-
-##### 🐛 Corregido
-- **Override manual de AS400 sin caducidad**: `hasManualOverrideFor` solo comprobaba si existía una entrada en `manualOverrides` para el job, sin importar su fecha. Esto provocaba que una revisión manual de ayer (p. ej. "Backup AS400 SD" marcado como éxito el 03/08) siguiera aplicando hoy, ocultando que la ejecución del día en curso no había sido revisada todavía. Efecto observado: de los 4 jobs AS400, 2 se mostraban como `SUCCESS` (heredando el override antiguo) y 2 como `PDTE COMPROBACIÓN` (sin override previo).
-- `hasManualOverrideFor` ahora recibe la ventana operacional (`windowStart`) y solo respeta el override si su `timestamp` cae dentro de la ventana actual (arranca cada día a las 18:00). Un override de una ventana anterior deja de aplicarse automáticamente, exigiendo nueva revisión manual cada día.
-- `applyAs400PendingReview` y el `useMemo` de `dashboardRows` propagan `windowStart` a esta validación.
-
-##### ✨ Añadido
-- **Nuevo KPI "Pdte. Comprobación"** en el dashboard: contabiliza los jobs AS400 en estado `PDTE COMPROBACIÓN`, para que el operador vea de un vistazo cuántos backups AS400 están a la espera de revisión manual del log ese día.
-- A diferencia de la v7.0.0 (donde estos jobs quedaban excluidos de todos los KPIs, incluido el total), en v8.0.0 **sí se contabilizan en el total "Jobs hoy"** (por decisión de negocio: son ejecuciones reales del día, solo que aún sin validar). Siguen excluidos de Éxitos/Avisos/Errores/En curso hasta que se confirme su resultado real.
-- Nuevo valor `"as400-pending"` en el tipo `DashboardKpiFilter` (`types/ui.ts`), permitiendo filtrar la tabla al hacer clic en el nuevo KPI, igual que el resto de tarjetas.
-
-##### 🎨 UI
-- Ajuste de rejilla de KPIs en escritorio (`styles.css`): `.kpis` pasa de `repeat(5, 1fr)` a `repeat(6, 1fr)` para acomodar el nuevo KPI en una sola fila.
-- Ajuste en vista móvil (`mobile.css`): eliminada la regla `.kpis .kpi-card:nth-child(5) { grid-column: 1 / -1 }`, que forzaba a la 5ª tarjeta a ocupar la fila completa cuando sobraba en una rejilla de 2 columnas con 5 elementos. Con 6 tarjetas, la rejilla de 2 columnas encaja de forma natural en 3 filas sin necesidad de ese ajuste.
-
-##### 🔧 Interno
-- Cambios principales en:
-  - `src/App.tsx` (`hasManualOverrideFor`, `applyAs400PendingReview`, `computeB2Kpis`, `dashboardRows`, nuevo bloque `<Kpi>` "Pdte. Comprobación").
-  - `src/types/ui.ts` (`DashboardKpiFilter` incluye `"as400-pending"`).
-  - `src/styles.css` (rejilla `.kpis` a 6 columnas).
-  - `src/mobile.css` (eliminada regla `nth-child(5)` obsoleta).
-- Descartada una hipótesis intermedia que modificaba `server.js` para forzar `status: 'pending'` en los 4 jobs AS400 desde el backend; se revirtió por interferir con la lógica ya existente en frontend (`applyAs400PendingReview`), que resultó ser el punto correcto de intervención.
-
-##### ✅ Cierres
-- Pendiente conocido de v7.0.0 ("Revisar si PDTE COMPROBACIÓN debe reflejarse también en HistoryTab.tsx/ExecutionsTab.tsx") sigue abierto, no auditado en esta sesión.
-- Pendiente conocido de v7.0.0 ("dar un color/badge propio a PDTE COMPROBACIÓN en styles.css") sigue abierto; el KPI nuevo usa color propio (#a78bfa), pero el badge de estado en la tabla continúa con el estilo neutro `unknown`.
-
 #### [9.0.0] - 2026-08-11
 
 ##### 🚀 Versión mayor
@@ -73,6 +42,37 @@
 - Revisar el doble login de Microsoft/Entra ID observado en producción (arrastrado desde v8.0.0).
 - Evolución pendiente de destinatarios del informe diario desde la UI (S-5): persistencia en config-shared.json y gestión de Para/CC/CCO (definida pero no completada).
 - Valorar quitar o silenciar el log de diagnóstico [REFRESH:ROWS] si genera demasiado ruido en producción (arrastrado desde v7.0.0).
+
+#### [8.0.0] - 2026-08-04
+
+##### 🚀 Versión mayor
+- Cierre del bloque de fiabilidad de KPIs para jobs AS400 de comprobación manual (Backup AS400 SD/PR/RR/SDB-TGT), tras detectar que un override manual de un día anterior podía "heredarse" indebidamente al día en curso.
+
+##### 🐛 Corregido
+- **Override manual de AS400 sin caducidad**: `hasManualOverrideFor` solo comprobaba si existía una entrada en `manualOverrides` para el job, sin importar su fecha. Esto provocaba que una revisión manual de ayer (p. ej. "Backup AS400 SD" marcado como éxito el 03/08) siguiera aplicando hoy, ocultando que la ejecución del día en curso no había sido revisada todavía. Efecto observado: de los 4 jobs AS400, 2 se mostraban como `SUCCESS` (heredando el override antiguo) y 2 como `PDTE COMPROBACIÓN` (sin override previo).
+- `hasManualOverrideFor` ahora recibe la ventana operacional (`windowStart`) y solo respeta el override si su `timestamp` cae dentro de la ventana actual (arranca cada día a las 18:00). Un override de una ventana anterior deja de aplicarse automáticamente, exigiendo nueva revisión manual cada día.
+- `applyAs400PendingReview` y el `useMemo` de `dashboardRows` propagan `windowStart` a esta validación.
+
+##### ✨ Añadido
+- **Nuevo KPI "Pdte. Comprobación"** en el dashboard: contabiliza los jobs AS400 en estado `PDTE COMPROBACIÓN`, para que el operador vea de un vistazo cuántos backups AS400 están a la espera de revisión manual del log ese día.
+- A diferencia de la v7.0.0 (donde estos jobs quedaban excluidos de todos los KPIs, incluido el total), en v8.0.0 **sí se contabilizan en el total "Jobs hoy"** (por decisión de negocio: son ejecuciones reales del día, solo que aún sin validar). Siguen excluidos de Éxitos/Avisos/Errores/En curso hasta que se confirme su resultado real.
+- Nuevo valor `"as400-pending"` en el tipo `DashboardKpiFilter` (`types/ui.ts`), permitiendo filtrar la tabla al hacer clic en el nuevo KPI, igual que el resto de tarjetas.
+
+##### 🎨 UI
+- Ajuste de rejilla de KPIs en escritorio (`styles.css`): `.kpis` pasa de `repeat(5, 1fr)` a `repeat(6, 1fr)` para acomodar el nuevo KPI en una sola fila.
+- Ajuste en vista móvil (`mobile.css`): eliminada la regla `.kpis .kpi-card:nth-child(5) { grid-column: 1 / -1 }`, que forzaba a la 5ª tarjeta a ocupar la fila completa cuando sobraba en una rejilla de 2 columnas con 5 elementos. Con 6 tarjetas, la rejilla de 2 columnas encaja de forma natural en 3 filas sin necesidad de ese ajuste.
+
+##### 🔧 Interno
+- Cambios principales en:
+  - `src/App.tsx` (`hasManualOverrideFor`, `applyAs400PendingReview`, `computeB2Kpis`, `dashboardRows`, nuevo bloque `<Kpi>` "Pdte. Comprobación").
+  - `src/types/ui.ts` (`DashboardKpiFilter` incluye `"as400-pending"`).
+  - `src/styles.css` (rejilla `.kpis` a 6 columnas).
+  - `src/mobile.css` (eliminada regla `nth-child(5)` obsoleta).
+- Descartada una hipótesis intermedia que modificaba `server.js` para forzar `status: 'pending'` en los 4 jobs AS400 desde el backend; se revirtió por interferir con la lógica ya existente en frontend (`applyAs400PendingReview`), que resultó ser el punto correcto de intervención.
+
+##### ✅ Cierres
+- Pendiente conocido de v7.0.0 ("Revisar si PDTE COMPROBACIÓN debe reflejarse también en HistoryTab.tsx/ExecutionsTab.tsx") sigue abierto, no auditado en esta sesión.
+- Pendiente conocido de v7.0.0 ("dar un color/badge propio a PDTE COMPROBACIÓN en styles.css") sigue abierto; el KPI nuevo usa color propio (#a78bfa), pero el badge de estado en la tabla continúa con el estilo neutro `unknown`.
 
 #### [7.0.0] - 2026-08-03
 
