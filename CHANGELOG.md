@@ -31,6 +31,49 @@
 - Pendiente conocido de v7.0.0 ("Revisar si PDTE COMPROBACIÓN debe reflejarse también en HistoryTab.tsx/ExecutionsTab.tsx") sigue abierto, no auditado en esta sesión.
 - Pendiente conocido de v7.0.0 ("dar un color/badge propio a PDTE COMPROBACIÓN en styles.css") sigue abierto; el KPI nuevo usa color propio (#a78bfa), pero el badge de estado en la tabla continúa con el estilo neutro `unknown`.
 
+#### [9.0.0] - 2026-08-11
+
+##### 🚀 Versión mayor
+- Sesión dedicada a corregir INICIO/FIN/DURACION reales para los backups que no son Veeam SQL: Barracuda, VDC (Veeam Data Cloud) y AS400.
+- Cierre de 4 incidencias encadenadas detectadas y corregidas en cascada durante la validación en producción.
+
+##### 🐛 Corregido
+- **Barracuda mostraba la ventana operacional en vez de la hora real de INICIO**: el Dashboard usaba `evaluateEmailRule` (generico) para Barracuda, que nunca leia el cuerpo del correo y dejaba `startTime`/`endTime`/`durationMs` en null, mostrando `receivedDateTime`/`nextRun` en su lugar.
+- Nueva funcion `evaluateBarracudaRule` (async) en `electron/modules/rules.cjs`: descarga el cuerpo del correo con `getMessageBody`, aplica `cleanBarracudaFooter` + `parseBarracudaBody` y usa los campos reales `Start Date`/`End Date`/`Duration` del log (con fallback a `errorWord`/`successWord` si falla la descarga).
+- `buildBarracudaRows` paso a ser `async` y recibe `cfg`; `server.js` actualizado para `await` y pasar `cfg`.
+- **Columna INICIO priorizaba `nextRun` sobre `startTime`**: en `src/components/JobTable.tsx`, tanto la vista de escritorio como la movil usaban `r.nextRun ?? r.startTime`, por lo que Barracuda (y cualquier fuente con `nextRun` siempre relleno) nunca llegaba a mostrar su `startTime` real. Invertido a `r.startTime ?? r.nextRun`.
+- **Duracion de Barracuda vacia**: `evaluateBarracudaRule` calculaba `durationMs` correctamente pero dejaba `duration: ''` sin formatear. Ahora usa `formatDurationMs(durationMs)`, igual que el resto de fuentes.
+- **VDC no calculaba tiempos reales**: `parseVdcBody` solo miraba `subject`/`bodyPreview` y siempre devolvia `startTime`/`endTime`/`durationMs` en null (limitacion documentada en v2.2).
+- `parseVdcBody` ahora acepta un segundo parametro `bodyContent` y extrae la hora de finalizacion real del correo mediante el patron `finished on ... UTC`.
+- Nueva funcion `evaluateVdcRule` (async) en `electron/modules/rules.cjs` con horario fijo por tipo de backup (`VDC_FIXED_SCHEDULE`): VDC Exchange 01:30, VDC OneDrive 02:30, VDC Sharepoint y Teams 22:00. El dia se calcula segun `computeVdcFixedStart`, ajustando a la ventana operacional que arranca a las 18:00.
+- `buildVdcRows` paso a ser `async` y recibe `cfg`; `server.js` actualizado para `await` y pasar `cfg`.
+- **AS400 no calculaba tiempos reales en el Dashboard en vivo**: `evaluateAs400Rule` obtenia el adjunto (`as400LogContent`) pero nunca lo parseaba, dejando `startTime: null` y usando `receivedDateTime` como aproximacion de FIN (a diferencia del Historico, que si usa `parseAs400Attachment` desde v2.2).
+- Ademas, `buildAs400Rows` descargaba el adjunto real (via `fetchAs400Attachment`) **despues** de que `evaluateAs400Rule` ya hubiera construido la fila, por lo que aunque se intentara parsear en el sitio equivocado, el contenido real llegaba demasiado tarde.
+- Se añadio un segundo paso en `buildAs400Rows` que reparsea con `parseAs400Attachment` tras la descarga del adjunto y sobreescribe `startTime`/`endTime`/`durationMs`/`duration` en la fila ya construida, sin tocar `status`/`reason` (para no afectar la logica de **PDTE COMPROBACIÓN**).
+- **Colision de subject entre "Backup AS400 SD" y "Backup AS400 SDB/TGT"**: el patron `"LOG Backup SD"` es substring literal de `"LOG Backup SDB/TGT"`, y el matching con `includesCI` (simple `.includes`) no respeta bordes de palabra, por lo que ambas reglas devolvian el mismo correo y, por tanto, los mismos tiempos.
+- Añadido `patternRegex` con bordes de palabra `(^|[^a-z0-9])patron([^a-z0-9]|$)` en `evaluateAs400Rule`, replicando el mismo criterio ya validado desde v2.2 en el Historico (`getJobExecutionsFromEmailHistory` en `graph.cjs`).
+
+##### ✨ Añadido
+- **Regla funcional exclusiva de VDC**: solo se considera la primera ejecucion (primer correo cronologico) de cada ventana operacional para cada uno de los 3 backups VDC, ignorando correos posteriores del mismo job en esa misma ventana independientemente de su resultado. El `sort` de `evaluateVdcRule` se invirtio de mas-reciente-primero a mas-antiguo-primero para reflejar esta regla.
+
+##### 🔧 Interno
+- Cambios principales en:
+- `electron/modules/graph.cjs` (`parseVdcBody` con extraccion de `endTime` real).
+- `electron/modules/rules.cjs` (`evaluateBarracudaRule`, `evaluateVdcRule`, `VDC_FIXED_SCHEDULE`, `computeVdcFixedStart`, `buildBarracudaRows`/`buildVdcRows` ahora async; reparseo de AS400 en `buildAs400Rows`; `patternRegex` con bordes de palabra en `evaluateAs400Rule`).
+- `server.js` (llamadas a `buildBarracudaRows`/`buildVdcRows` actualizadas con `await` y `cfg`).
+- `src/components/JobTable.tsx` (prioridad `startTime` sobre `nextRun` en INICIO, vista escritorio y movil).
+- Validado en produccion en DASHBOARD el 05/08/2026 con los 3 jobs Barracuda (Exchange, Sharepoint, OneDrive) mostrando INICIO/FIN/DURACION correctos.
+- Validado visualmente en produccion que INICIO de VDC ya muestra las 3 horas fijas correctas.
+- Validado en produccion en DASHBOARD el 11/08/2026 con los 4 jobs AS400 (SD, SDB/TGT, PR, RR) mostrando INICIO/FIN/DURACION correctos y distintos entre si.
+
+##### ⚠️ Pendiente conocido (acumulado, no solo de esta sesión)
+- Validar FIN y DURACION de VDC con ejecuciones reales (Sharepoint y Teams 22:00, Exchange 01:30 y OneDrive 02:30).
+- Auditar el estado PDTE COMPROBACIÓN (AS400) en HistoryTab.tsx/ExecutionsTab.tsx (arrastrado desde v7.0.0/v8.0.0).
+- Asignar un badge/color propio a PDTE COMPROBACIÓN en la tabla (actualmente usa estilo neutro).
+- Revisar el doble login de Microsoft/Entra ID observado en producción (arrastrado desde v8.0.0).
+- Evolución pendiente de destinatarios del informe diario desde la UI (S-5): persistencia en config-shared.json y gestión de Para/CC/CCO (definida pero no completada).
+- Valorar quitar o silenciar el log de diagnóstico [REFRESH:ROWS] si genera demasiado ruido en producción (arrastrado desde v7.0.0).
+
 #### [7.0.0] - 2026-08-03
 
 ##### 🚀 Versión mayor
