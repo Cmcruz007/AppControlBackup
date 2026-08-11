@@ -1,6 +1,6 @@
 // electron/modules/rules.cjs
 const { includesCI, pad2, lookupCriticality, formatDurationMs } = require('./utils.cjs')
-const { fetchAs400Attachment, getMessageBody, cleanBarracudaFooter, parseBarracudaBody, cleanVdcFooter, parseVdcBody } = require('./graph.cjs')
+const { fetchAs400Attachment, getMessageBody, cleanBarracudaFooter, parseBarracudaBody, cleanVdcFooter, parseVdcBody, parseAs400Attachment } = require('./graph.cjs')
 
 function buildVdcEmailStatus(rule, email) {
   if (!email) return 'failed'
@@ -83,18 +83,30 @@ function evaluateAs400Rule(rule, emails, inicio, fin, criticalityByJob) {
     if (file && file.contentBytes) as400LogContent = Buffer.from(file.contentBytes, 'base64').toString('latin1')
   }
 
+  const parsedAs400 = as400LogContent ? parseAs400Attachment(as400LogContent) : null
+
   const finalDate = chosen?.receivedDateTime ? new Date(chosen.receivedDateTime) : null
+  const realStartDate = parsedAs400?.startTime ? new Date(parsedAs400.startTime) : null
+  const realEndDate = parsedAs400?.endTime ? new Date(parsedAs400.endTime) : finalDate
+
+  let fStart = ''
+  if (realStartDate && !Number.isNaN(realStartDate.getTime())) fStart = `${pad2(realStartDate.getHours())}:${pad2(realStartDate.getMinutes())}`
   let fEnd = ''
-  if (finalDate && !Number.isNaN(finalDate.getTime())) fEnd = `${pad2(finalDate.getHours())}:${pad2(finalDate.getMinutes())}`
+  if (realEndDate && !Number.isNaN(realEndDate.getTime())) fEnd = `${pad2(realEndDate.getHours())}:${pad2(realEndDate.getMinutes())}`
+
+  const realDurationMs = parsedAs400?.durationMs ?? null
 
   return {
     jobId: `as400:${rule.id}`, jobName: rule.title || rule.name || `[AS400] ${pattern || rule.id}`,
     nextRun: startDate.toISOString(), lastRun: chosen?.receivedDateTime ?? null,
-    lastResult: null, startTime: null, endTime: chosen?.receivedDateTime ?? null,
-    startTimeDisplay: '', endTimeDisplay: fEnd, duration: '',
+    lastResult: null,
+    startTime: parsedAs400?.startTime ?? null,
+    endTime: parsedAs400?.endTime ?? chosen?.receivedDateTime ?? null,
+    startTimeDisplay: fStart, endTimeDisplay: fEnd,
+    duration: realDurationMs ? formatDurationMs(realDurationMs) : '',
     status: chosen ? 'success' : 'pending', as400LogContent,
     reason: chosen ? 'Correo Recibido, revisar manualmente el log' : 'Pendiente Recepcion',
-    durationMs: null, durationTrend: null, relaunched: false,
+    durationMs: realDurationMs, durationTrend: null, relaunched: false,
     email: chosen ? { subject: chosen.subject, date: chosen.receivedDateTime } : null,
     allEmails: inWindow.map((e) => ({ subject: e.subject, date: e.receivedDateTime, status: 'success' })),
     criticality: lookupCriticality(rule.title || rule.name, criticalityByJob), source: 'as400', category: 'as400', notes: rule.notes || '',
