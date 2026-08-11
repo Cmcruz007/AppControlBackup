@@ -7,8 +7,8 @@ export const msalConfig: Configuration = {
   auth: {
     clientId: entraClientId,
     authority: `https://login.microsoftonline.com/${entraTenantId}`,
-    redirectUri: "https://dashboard",
-    postLogoutRedirectUri: "https://dashboard",
+    redirectUri: window.location.origin,
+    postLogoutRedirectUri: window.location.origin,
     navigateToLoginRequestUrl: true,
   },
   cache: {
