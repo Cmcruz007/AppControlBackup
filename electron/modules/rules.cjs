@@ -59,6 +59,14 @@ function evaluateAs400Rule(rule, emails, inicio, fin, criticalityByJob) {
   if (isWorkdayRule && (dayOfWeek === 0 || dayOfWeek === 6)) return null
 
   const pattern = String(rule?.subjectContains || rule?.pattern || '').trim()
+
+  // Bordes de palabra para evitar colisiones tipo "LOG Backup SD" matcheando
+  // dentro de "LOG Backup SDB/TGT" (mismo criterio ya validado en el historico,
+  // ver getJobExecutionsFromEmailHistory en graph.cjs).
+  const escapeRegexAs400 = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const patternRegex = pattern
+    ? new RegExp(`(^|[^a-z0-9])${escapeRegexAs400(pattern)}([^a-z0-9]|$)`, 'i')
+    : null
   const startMs = startDate.getTime()
   const endMs = fin instanceof Date ? fin.getTime() : new Date(fin).getTime()
   const tolerance = 24 * 60 * 60 * 1000
@@ -72,7 +80,7 @@ function evaluateAs400Rule(rule, emails, inicio, fin, criticalityByJob) {
       const from = m?.from?.emailAddress?.address || ''
       const text = `${m?.subject || ''}\n${m?.bodyPreview || ''}`
       const matchSender = rule.sender ? includesCI(sender, rule.sender) || includesCI(from, rule.sender) : true
-      return matchSender && (pattern ? includesCI(text, pattern) : false)
+      return matchSender && (patternRegex ? patternRegex.test(text) : false)
     })
     .sort((a, b) => new Date(b.receivedDateTime).getTime() - new Date(a.receivedDateTime).getTime())
 
