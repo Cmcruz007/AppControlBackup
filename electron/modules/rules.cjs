@@ -293,6 +293,36 @@ async function buildAs400Rows(rules, emails, inicio, fin, cfg, criticalityByJob 
     const logContent = await fetchAs400Attachment(cfg, chosenEmail.id)
     if (logContent) row.as400LogContent = logContent
   }))
+
+  // Reparsear tiempos reales (arrancado/finalizado) ahora que el log ya esta disponible.
+  // Antes, evaluateAs400Rule solo tenia acceso a los adjuntos ya embebidos en la lista de
+  // correos (normalmente sin contentBytes), por lo que startTime/endTime/durationMs quedaban
+  // en null salvo que el adjunto ya viniera cargado.
+  candidates.forEach((row) => {
+    if (!row.as400LogContent) return
+
+    const parsedAs400 = parseAs400Attachment(row.as400LogContent)
+    if (!parsedAs400) return
+
+    const realStartDate = parsedAs400.startTime ? new Date(parsedAs400.startTime) : null
+    const realEndDate = parsedAs400.endTime ? new Date(parsedAs400.endTime) : null
+
+    if (realStartDate && !Number.isNaN(realStartDate.getTime())) {
+      row.startTime = parsedAs400.startTime
+      row.startTimeDisplay = `${pad2(realStartDate.getHours())}:${pad2(realStartDate.getMinutes())}`
+    }
+
+    if (realEndDate && !Number.isNaN(realEndDate.getTime())) {
+      row.endTime = parsedAs400.endTime
+      row.endTimeDisplay = `${pad2(realEndDate.getHours())}:${pad2(realEndDate.getMinutes())}`
+    }
+
+    if (parsedAs400.durationMs != null) {
+      row.durationMs = parsedAs400.durationMs
+      row.duration = formatDurationMs(parsedAs400.durationMs)
+    }
+  })
+
   return candidates
 }
 
