@@ -628,11 +628,60 @@ async function getJobExecutionsFromEmailHistory(cfg, rule, jobName, limit = 200,
     executions.push(...batchResults)
   }
 
+  // Deduplicado por dia de ejecucion real (AS400 en concreto puede recibir mas
+  // de un correo con el mismo asunto/remitente para la misma ejecucion, p.ej. un
+  // segundo correo 'Log Backup RR' cuyo adjunto no trae el patron esperado y no
+  // se puede parsear). Si dos o mas ejecuciones caen en el mismo dia calendario
+  // (segun start, con fallback a end/receivedDateTime), nos quedamos solo con la
+  // que tiene datos realmente parseados (parsed === true); si ninguna se pudo
+  // parsear, nos quedamos con la mas reciente de ese dia para no perder el rastro.
+  const getDayKey = (execution) => {
+    const raw = execution?.start || execution?.end || execution?.receivedDateTime
+    if (!raw) return null
+    const d = new Date(raw)
+    if (Number.isNaN(d.getTime())) return null
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  }
+
+  const bestByDay = new Map()
+
+  for (const execution of executions) {
+    const dayKey = getDayKey(execution)
+
+    if (!dayKey) {
+      // Sin fecha valida: lo dejamos pasar tal cual, con clave unica por id.
+      bestByDay.set(`no-date:${execution.id}`, execution)
+      continue
+    }
+
+    const current = bestByDay.get(dayKey)
+
+    if (!current) {
+      bestByDay.set(dayKey, execution)
+      continue
+    }
+
+    const currentParsed = !!current.parsed
+    const executionParsed = !!execution.parsed
+
+    if (executionParsed && !currentParsed) {
+      bestByDay.set(dayKey, execution)
+    } else if (executionParsed === currentParsed) {
+      const currentTime = new Date(current?.start || current?.end || 0).getTime()
+      const executionTime = new Date(execution?.start || execution?.end || 0).getTime()
+      if (executionTime > currentTime) bestByDay.set(dayKey, execution)
+    }
+    // Si current ya esta parseado y execution no, se ignora execution (se descarta el fantasma).
+  }
+
+  const dedupedExecutions = [...bestByDay.values()]
+    .sort((a, b) => new Date(b.start || b.end || 0).getTime() - new Date(a.start || a.end || 0).getTime())
+
   return {
     ok: true,
     jobName: jobName || rule?.title || rule?.name || 'Job email',
-    totalExecutions: executions.length,
-    executions,
+    totalExecutions: dedupedExecutions.length,
+    executions: dedupedExecutions,
   }
 }
 
