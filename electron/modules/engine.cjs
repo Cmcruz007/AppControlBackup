@@ -131,6 +131,18 @@ function applyRelaunchLogic(rows) {
     successRows[0].relaunched = true
     return [successRows[0]]
   }
+
+  // Si el job esta actualmente EN CURSO (running/pending), esa ejecucion debe
+  // prevalecer sobre cualquier intento anterior fallido o con avisos dentro de
+  // la misma ventana: el resultado final aun no se conoce, por lo que no puede
+  // contarse a la vez como error/aviso y como en curso.
+  const runningRows = rows.filter((r) => r.status === 'running' || r.status === 'pending')
+  if (runningRows.length > 0) {
+    const sortedRunning = [...runningRows].sort((a, b) => new Date(b.nextRun).getTime() - new Date(a.nextRun).getTime())
+    sortedRunning[0].relaunched = true
+    return [sortedRunning[0]]
+  }
+
   const allFailed = rows.every((r) => r.status === 'failed')
   if (allFailed) {
     const sorted = [...rows].sort((a, b) => new Date(b.nextRun).getTime() - new Date(a.nextRun).getTime())
