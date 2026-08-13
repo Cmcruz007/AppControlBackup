@@ -1,5 +1,31 @@
 ### Changelog
 
+#### [10.0.0] - 2026-08-13
+
+##### 🚀 Versión mayor
+- Sesión de correcciones de fiabilidad en KPIs y en el Historial de ejecuciones, detectadas tras el cierre de v9.0.0.
+
+##### 🐛 Corregido
+- **KPIs duplicados en Dashboard y correo diario (17:00) para jobs relanzados**: cuando un job fallaba (o tenía avisos) y se relanzaba quedando actualmente EN CURSO dentro de la misma ventana operacional, `applyRelaunchLogic` (en `electron/modules/engine.cjs`) devolvía una fila por cada estado distinto detectado entre los reintentos (p. ej. `failed` + `running`, o `warning` + `running`), por lo que el job se contabilizaba simultáneamente en Errores/Avisos **y** en En Curso.
+- Se añadió una comprobación previa: si existe alguna ejecución `running`/`pending` dentro del grupo de reintentos, solo se conserva esa ejecución (la más reciente), ya que el resultado final aún no se conoce. Los casos `hasSuccess` y `allFailed` (ya existentes) no se modificaron. La corrección afecta tanto al Dashboard como al correo diario, ya que ambos consumen el mismo snapshot (`lastPayload`).
+- **Filas fantasma en el Historial de ejecuciones AS400**: algunos jobs AS400 (detectado en RR, aunque el mecanismo aplica a cualquiera) reciben más de un correo con idéntico asunto y remitente (`Log Backup RR` / `QSYSOPR.rr@UCI.COM`) para la misma ejecución real; uno de ellos trae el log completo y parseable, y otro no, generando una fila adicional en el Historial con INICIO = hora de recepción del correo y DURACIÓN vacía (`—`), justo coincidiendo con la hora de finalización real del job.
+- `getJobExecutionsFromEmailHistory` (en `electron/modules/graph.cjs`) ahora deduplica las ejecuciones agrupando por día calendario (según `start`, con fallback a `end`/`receivedDateTime`): cuando dos o más ejecuciones caen en el mismo día, se conserva la que tiene datos realmente parseados (`parsed === true`); si ninguna se pudo parsear, se conserva la más reciente de ese día para no perder el rastro. Esta deduplicación aplica a las 3 fuentes que usan el Historial (AS400, Barracuda, VDC), no solo a AS400.
+
+##### 🔧 Interno
+- Cambios principales en:
+- `electron/modules/engine.cjs` (`applyRelaunchLogic`: nuevo caso `running`/`pending` con prioridad sobre `failed`/`warning`).
+- `electron/modules/graph.cjs` (`getJobExecutionsFromEmailHistory`: nueva lógica de deduplicación por día con `getDayKey`/`bestByDay`).
+- Validado en producción en DASHBOARD el 13/08/2026: Historial de "Backup AS400 RR" ya no muestra filas duplicadas con duración vacía.
+
+##### ⚠️ Pendiente conocido (acumulado, no solo de esta sesión)
+- Confirmar en el próximo caso real de relanzamiento (fallo/aviso → reintento en curso) que el correo de las 17:00 y el Dashboard ya no duplican el KPI.
+- Auditar el estado PDTE COMPROBACIÓN (AS400) en HistoryTab.tsx/ExecutionsTab.tsx (arrastrado desde v7.0.0/v8.0.0).
+- Asignar un badge/color propio a PDTE COMPROBACIÓN en la tabla (actualmente usa estilo neutro).
+- Revisar el doble login de Microsoft/Entra ID observado en producción (arrastrado desde v8.0.0).
+- Evolución pendiente de destinatarios del informe diario desde la UI (S-5): persistencia en config-shared.json y gestión de Para/CC/CCO (definida pero no completada).
+- Valorar quitar o silenciar el log de diagnóstico [REFRESH:ROWS] si genera demasiado ruido en producción (arrastrado desde v7.0.0).
+- Automatizar la sincronización de CHANGELOG.md hacia public/CHANGELOG.md (por ejemplo con un script prebuild en package.json), ya que el modal de versiones lee /CHANGELOG.md desde public/dist, no desde la raíz del repo (detectado en v9.0.0).
+
 #### [9.0.0] - 2026-08-11
 
 ##### 🚀 Versión mayor
