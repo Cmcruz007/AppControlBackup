@@ -264,4 +264,27 @@
     white-space: normal !important;
     text-align: center !important;
   }
+
+  /* Topbar: linea 1 = titulo + version, linea 2 = actualizado + badge Entra ID */
+  .topbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .topbar h1 {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 18px;
+    white-space: nowrap;
+  }
+
+  .topbar > div {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
 }
