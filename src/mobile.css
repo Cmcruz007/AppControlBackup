@@ -19,10 +19,13 @@
     overflow-x: hidden;
   }
 
+  /* KPIs + linea separadora debajo de los 6 KPIs */
   .kpis {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 12px;
     margin-bottom: 14px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid rgba(148, 163, 184, .18);
   }
 
   .kpi-card {
@@ -209,14 +212,16 @@
     padding: 10px 12px;
     border-radius: 14px;
     background: rgba(15, 23, 42, .35);
+    text-align: left;
   }
 
-  /* Titulo "SITUACION BACKUP DEL DIA..." en 2 lineas en vez de 3 */
+  /* Titulo "SITUACION BACKUP DEL DIA..." en 2 lineas, alineado a la izquierda */
   .window-title-main {
     display: block;
     font-size: 16px;
     line-height: 1.2;
     letter-spacing: 0;
+    text-align: left;
   }
 
   .window-title-range {
@@ -224,6 +229,7 @@
     margin-top: 6px;
     font-size: 11px;
     line-height: 1.25;
+    text-align: left;
   }
 
   .toolbar {
@@ -234,6 +240,9 @@
   .toolbar > div:first-child {
     flex-wrap: nowrap;
     gap: 8px;
+    margin-bottom: 14px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid rgba(148, 163, 184, .18);
   }
 
   .toolbar > div:first-child > .flex-spacer {
@@ -259,12 +268,28 @@
     min-width: 0;
   }
 
+  /* Bloque de filtros: separado visualmente de Buscar/Actualizar, con titulo "Filtros" */
   .category-filter-bar {
     display: grid !important;
     grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
     gap: 8px !important;
     width: 100% !important;
     overflow: hidden;
+    position: relative;
+    margin-top: 4px;
+    padding-top: 22px;
+  }
+
+  .category-filter-bar::before {
+    content: "Filtros";
+    position: absolute;
+    top: 0;
+    left: 0;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    color: var(--muted);
   }
 
   .category-filter-bar button {
@@ -279,7 +304,20 @@
     text-align: center !important;
   }
 
-  /* Topbar: linea 1 = titulo + version, linea 2 = actualizado + badge Entra ID */
+  /* Descripcion del filtro activo (texto que aparece al pinchar un filtro) */
+  .category-filter-description {
+    width: 100%;
+    margin-top: 8px;
+    padding: 8px 10px;
+    border-radius: 10px;
+    background: rgba(15, 23, 42, .35);
+    border: 1px solid rgba(148, 163, 184, .12);
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.35;
+  }
+
+  /* Topbar: linea 1 = titulo (izq) + version (der); linea 2 = actualizado + badge Entra ID */
   .topbar {
     flex-direction: column;
     align-items: stretch;
@@ -289,6 +327,8 @@
   .topbar h1 {
     display: flex;
     align-items: center;
+    justify-content: space-between;
+    width: 100%;
     gap: 8px;
     font-size: 18px;
     white-space: nowrap;

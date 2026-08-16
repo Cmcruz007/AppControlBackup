@@ -50,23 +50,18 @@ async function handleExportScheduleExcel() {
 
 function getAs400LogColor(jobName?: string) {
   const name = String(jobName || "").toLowerCase()
-
   // Comprobamos SDB/TGT primero porque "sdb" contiene "sd" como substring.
   if (name.includes("sdb") || name.includes("tgt")) return "#7890F0"
   if (name.includes("as400 pr") || name.includes("backup pr")) return "#F01818"
   if (name.includes("as400 rr") || name.includes("backup rr")) return "#A0A000"
   if (name.includes("as400 sd") || name.includes("backup sd")) return "#00FF00"
-
   return "#E5E7EB"
 }
 
 function formatBackupTitleDay(value?: string | null) {
   if (!value) return ""
-
   const d = new Date(value)
-
   if (Number.isNaN(d.getTime())) return ""
-
   return d.toLocaleDateString("es-ES", {
     day: "2-digit",
     month: "long",
@@ -76,28 +71,22 @@ function formatBackupTitleDay(value?: string | null) {
 
 function formatBackupWindowRange(startValue?: string | null, endValue?: string | null) {
   if (!startValue || !endValue) return ""
-
   const start = new Date(startValue)
   const end = new Date(endValue)
-
   if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return ""
-
   const displayEnd = new Date(end.getTime() - 60 * 1000)
-
   const fmtDate = (d: Date) =>
     d.toLocaleDateString("es-ES", {
       day: "2-digit",
       month: "2-digit",
       year: "numeric",
     })
-
   const fmtTime = (d: Date) =>
     d.toLocaleTimeString("es-ES", {
       hour: "2-digit",
       minute: "2-digit",
       hour12: false,
     })
-
   return `Ventana ${fmtDate(start)}, ${fmtTime(start)} — ${fmtDate(displayEnd)}, ${fmtTime(displayEnd)}`
 }
 
@@ -116,22 +105,17 @@ function normalizeUiState(value?: string | null) {
 
 function getDisplayState(row?: JobRowUi | null): string {
   const anyRow = row as any
-
   const raw = String(
     anyRow?.globalState ||
     anyRow?.status ||
     anyRow?.state ||
     ""
   ).trim()
-
   const s = raw.toUpperCase()
-
   if (s === "WARN") return "WARNING"
   if (s === "FAILED" || s === "FAILURE") return "ERROR"
   if (s === "NO_RUN" || s === "NORUN") return "NO-RUN"
-
   if (s === "PENDING") return "RUNNING"
-
   return s
 }
 
@@ -141,32 +125,27 @@ function getDisplayStateLower(row?: JobRowUi | null): string {
 
 function getStateLabel(row?: JobRowUi | null): string {
   const state = getDisplayState(row)
-
   if (state === "SUCCESS") return "SUCCESS"
   if (state === "WARNING") return "WARNING"
   if (state === "ERROR") return "ERROR"
   if (state === "RUNNING") return "EN CURSO"
   if (state === "NO-RUN") return "SIN EJECUCIÓN"
-
   return state || "-"
 }
 
 function getStateClass(row?: JobRowUi | null): string {
   const state = getDisplayState(row)
-
   if (state === "SUCCESS") return "success"
   if (state === "WARNING") return "warning"
   if (state === "ERROR") return "error"
   if (state === "RUNNING") return "running"
   if (state === "NO-RUN") return "no-run"
-
   return "unknown"
 }
 
 function isNoRunRow(row?: JobRowUi | null) {
   const state = getDisplayState(row)
   const status = normalizeUiState((row as any)?.status)
-
   return (
     state === "NO-RUN" ||
     status === "no-run" ||
@@ -194,12 +173,10 @@ function detectIsAs400Job(source: any, fallbackName?: string | null): boolean {
   const idStr = String(source?.jobId ?? "").toLowerCase()
   const nameStr = String(source?.jobName ?? source?.name ?? fallbackName ?? "").toLowerCase()
   const srcStr = String(source?.source ?? source?.type ?? "").toLowerCase()
-
   if (idStr.startsWith("as400:")) return true
   if (srcStr.includes("as400")) return true
   if (/\bbackup\s+(as400\s+)?(sd|sdb|pr|rr)\b/.test(nameStr)) return true
   if (/sdb\/tgt/.test(nameStr)) return true
-
   return false
 }
 
@@ -219,21 +196,17 @@ function hasManualOverrideFor(
 ): boolean {
   if (!jobName || !manualOverrides) return false
   if (!Object.prototype.hasOwnProperty.call(manualOverrides, jobName)) return false
-
   // El override solo es valido para la ventana operacional en la que se
   // guardo. Cada dia a las 18:00 arranca una nueva ventana, y una revision
   // manual de ayer no debe "heredarse" automaticamente a la ejecucion de
   // hoy: el operador debe volver a confirmar el log del dia en curso.
   if (!windowStart) return true
-
   const ov = manualOverrides[jobName]
   const ovDateRaw = ov?.timestamp || ov?.updatedAt || ov?.date || null
   if (!ovDateRaw) return true // overrides antiguos sin fecha: se respetan (compat)
-
   const ovDate = new Date(ovDateRaw)
   const winStart = new Date(windowStart)
   if (Number.isNaN(ovDate.getTime()) || Number.isNaN(winStart.getTime())) return true
-
   return ovDate.getTime() >= winStart.getTime()
 }
 
@@ -243,21 +216,17 @@ function applyAs400PendingReview(
   windowStart?: string | null
 ): JobRowUi {
   const anyRow = row as any
-
   const isAs400 = detectIsAs400Job(anyRow, row?.jobName)
   const hasOverride = hasManualOverrideFor(row?.jobName, manualOverrides, windowStart)
   const display = getDisplayState(row)
-
   // Si ya hay un override manual guardado para este job DENTRO DE LA VENTANA
   // OPERACIONAL ACTUAL, el operador ya lo reviso hoy: respetamos su decision.
   // Un override de una ventana anterior (p.ej. de ayer) ya no cuenta.
   if (hasOverride) return row
-
   // Solo interceptamos el caso "AS400 + auto-SUCCESS". Si el job viniera
   // como ERROR o WARNING, ya se refleja correctamente en Errores/Avisos.
   if (!isAs400) return row
   if (display !== "SUCCESS") return row
-
   return {
     ...row,
     globalState: AS400_PENDING_REVIEW_LABEL,
@@ -273,21 +242,16 @@ function isAs400PendingReviewRow(row?: JobRowUi | null): boolean {
 
 function normalizeB2Row(row: JobRowUi): JobRowUi {
   const anyRow = row as any
-
   const rawStatus = String(anyRow?.status || anyRow?.state || "").trim().toLowerCase()
   const globalState = String(anyRow?.globalState || "").trim().toUpperCase()
   const displayState = getDisplayState(row)
-
   let normalizedStatus = rawStatus
-
   if (displayState === "SUCCESS") normalizedStatus = "success"
   else if (displayState === "WARNING") normalizedStatus = "warning"
   else if (displayState === "ERROR") normalizedStatus = "failed"
   else if (displayState === "RUNNING") normalizedStatus = "running"
   else if (displayState === "NO-RUN") normalizedStatus = "no-run"
-
   const detail = String(anyRow?.detail || anyRow?.reason || "")
-
   return {
     ...row,
     ...(anyRow?.rawStatus ? {} : { rawStatus }),
@@ -323,10 +287,8 @@ function computeB2Kpis(inputRows: JobRowUi[]) {
     pending: 0,
     as400PendingReview: 0,
   }
-
   for (const row of inputRows || []) {
     if (isNoRunRow(row)) continue
-
     // Los AS400 pendientes de revision manual SI cuentan en el total de
     // "Jobs hoy" (a diferencia de los NO-RUN, que quedan fuera del todo):
     // son ejecuciones reales de hoy, solo que aun sin validar por un
@@ -337,11 +299,8 @@ function computeB2Kpis(inputRows: JobRowUi[]) {
       kpis.as400PendingReview += 1
       continue
     }
-
     const state = getDisplayState(row)
-
     kpis.total += 1
-
     if (state === "SUCCESS") kpis.success += 1
     else if (state === "WARNING") kpis.warning += 1
     else if (state === "ERROR") {
@@ -351,8 +310,18 @@ function computeB2Kpis(inputRows: JobRowUi[]) {
       kpis.running += 1
     }
   }
-
   return kpis
+}
+
+// Textos descriptivos que se muestran debajo de los 6 botones de filtro
+// (category-filter-bar), segun la categoria activa. Vista movil y escritorio.
+const CATEGORY_DESCRIPTIONS: Record<string, string> = {
+  all: "Todos los backups a comprobar.",
+  veeam: "Sólo backups lanzados desde Veeam Backup & Replication.",
+  vdc: "Sólo backups Veeam Data Cloud (M365).",
+  barracuda: "Sólo backups Barracuda (M365).",
+  as400: "Sólo backups IBM AS400.",
+  nok: "Backups que no han terminado correctamente y que hay que corregir.",
 }
 
 // Props opcionales de Entra ID: solo se pasan desde main.tsx cuando
@@ -396,7 +365,6 @@ export default function App({
   const [executionsError, setExecutionsError] = useState<string | null>(null)
   const [authGateOpen, setAuthGateOpen] = useState(false)
   const unauthorizedRetryRef = useRef<{ count: number; lastAt: number }>({ count: 0, lastAt: 0 })
-
   const [dbJobs, setDbJobs] = useState<string[]>([])
   const [logModalData, setLogModalData] = useState<{ jobName: string; content: string | null; isAs400?: boolean } | null>(null)
   const [versionModalOpen, setVersionModalOpen] = useState(false)
@@ -1192,16 +1160,16 @@ export default function App({
                 </div>
 
                 <div
-  className="category-filter-bar"
-  style={{
-    display: "flex",
-    gap: "8px",
-    flexWrap: "wrap",
-    alignItems: "center",
-    width: "100%",
-    padding: "4px 0",
-  }}
->
+                  className="category-filter-bar"
+                  style={{
+                    display: "flex",
+                    gap: "8px",
+                    flexWrap: "wrap",
+                    alignItems: "center",
+                    width: "100%",
+                    padding: "4px 0",
+                  }}
+                >
                   {JOB_CATEGORIES.map((cat) => {
                     const isNok = cat.id === "nok"
                     const isActive = activeCategory === cat.id
@@ -1239,6 +1207,10 @@ export default function App({
                       </button>
                     )
                   })}
+                </div>
+
+                <div className="category-filter-description">
+                  {CATEGORY_DESCRIPTIONS[activeCategory]}
                 </div>
               </div>
 
@@ -1334,7 +1306,6 @@ export default function App({
             >
               <div className="email-modal-header">
                 <h2>{logModalData?.isAs400 ? "LOG AS/400" : "LOG BACKUP"} - {String(logModalData?.jobName || "Desconocido")}</h2>
-
                 <button
                   className="email-modal-close"
                   onClick={() => setLogModalData(null)}
@@ -1342,7 +1313,6 @@ export default function App({
                   ×
                 </button>
               </div>
-
               <div style={{ padding: 16, overflowY: "auto", maxHeight: "65vh" }}>
                 <pre
                   style={{
