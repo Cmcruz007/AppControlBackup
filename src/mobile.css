@@ -209,7 +209,7 @@
     width: 100%;
     order: 10;
     margin-top: 8px;
-    padding: 10px 12px;
+    padding: 10px 0;
     border-radius: 14px;
     background: rgba(15, 23, 42, .35);
     text-align: left;
@@ -269,16 +269,16 @@
   }
 
   /* Bloque de filtros: separado visualmente de Buscar/Actualizar, con titulo "Filtros" */
-  .category-filter-bar {
-    display: grid !important;
-    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
-    gap: 8px !important;
-    width: 100% !important;
-    overflow: hidden;
-    position: relative;
-    margin-top: 4px;
-    padding-top: 22px;
-  }
+ .category-filter-bar {
+  display: grid !important;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  gap: 8px !important;
+  width: 100% !important;
+  overflow: hidden;
+  position: relative;
+  margin-top: 4px;
+  padding-top: 26px !important;   /* antes: 22px, sin !important — el inline style ganaba */
+}
 
   .category-filter-bar::before {
     content: "Filtros";
