@@ -58,7 +58,7 @@
     background: var(--panel-2);
     border: 1px solid var(--border);
     border-radius: 16px;
-    padding: 14px;
+    padding: 10px 12px;
     overflow: hidden;
     position: relative;
     box-shadow: 0 10px 26px rgba(0, 0, 0, .18);
@@ -97,7 +97,7 @@
     align-items: flex-start;
     justify-content: space-between;
     gap: 10px;
-    margin-bottom: 12px;
+    margin-bottom: 8px;
   }
 
   .mobile-job-title-wrap {
@@ -137,11 +137,12 @@
     word-break: break-word;
   }
 
+  /* Bloques de metadatos (Fuente, Inicio, Fin, Duracion...) comprimidos */
   .mobile-job-meta {
     display: grid;
     grid-template-columns: 1fr;
-    gap: 8px;
-    margin-bottom: 10px;
+    gap: 4px;
+    margin-bottom: 6px;
   }
 
   .mobile-job-meta-item {
@@ -149,32 +150,32 @@
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    padding: 8px 10px;
-    border-radius: 10px;
+    padding: 4px 8px;
+    border-radius: 8px;
     background: rgba(15, 23, 42, .35);
     border: 1px solid rgba(148, 163, 184, .12);
   }
 
   .mobile-job-meta-label {
     color: var(--muted);
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 700;
   }
 
   .mobile-job-meta-value {
     color: var(--text);
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 700;
     text-align: right;
   }
 
   .mobile-job-detail {
-    margin-top: 10px;
-    padding: 10px;
-    border-radius: 10px;
+    margin-top: 6px;
+    padding: 8px;
+    border-radius: 8px;
     color: var(--muted);
     font-size: 12px;
-    line-height: 1.35;
+    line-height: 1.3;
     background: rgba(2, 6, 23, .28);
     border: 1px solid rgba(148, 163, 184, .12);
   }
@@ -182,7 +183,7 @@
   .mobile-job-actions {
     display: flex;
     gap: 8px;
-    margin-top: 12px;
+    margin-top: 8px;
   }
 
   .mobile-job-action-btn {
@@ -192,13 +193,12 @@
     border-radius: 10px;
   }
 
-  .tabs {
-    gap: 8px;
-    overflow-x: hidden;
-    flex-wrap: wrap;
+  /* Pestañas Dashboard/Historico y botones Backups (rojo) / Configuracion ocultos */
+  .tabs .tab {
+    display: none;
   }
 
-  .tabs .tab:nth-child(2) {
+  .tabs-config-btn {
     display: none;
   }
 
@@ -211,11 +211,12 @@
     background: rgba(15, 23, 42, .35);
   }
 
+  /* Titulo "SITUACION BACKUP DEL DIA..." en 2 lineas en vez de 3 */
   .window-title-main {
     display: block;
-    font-size: 22px;
-    line-height: 1.05;
-    letter-spacing: .5px;
+    font-size: 16px;
+    line-height: 1.2;
+    letter-spacing: 0;
   }
 
   .window-title-range {
@@ -229,19 +230,32 @@
     width: 100%;
   }
 
+  /* Fila superior de la toolbar: solo Buscar + Actualizar en la misma linea */
   .toolbar > div:first-child {
-    flex-wrap: wrap;
-    gap: 10px;
+    flex-wrap: nowrap;
+    gap: 8px;
+  }
+
+  .toolbar > div:first-child > .flex-spacer {
+    display: none;
+  }
+
+  /* Botones Enviar (3), Exportar (4) y Planificador (5) ocultos.
+     Se conserva el input Buscar (1) y el boton Refrescar/Actualizar (6) */
+  .toolbar > div:first-child > button:nth-child(3),
+  .toolbar > div:first-child > button:nth-child(4),
+  .toolbar > div:first-child > button:nth-child(5) {
+    display: none;
   }
 
   .search-input {
-    width: 100%;
+    width: auto;
     min-width: 0;
-    flex: 1 1 100%;
+    flex: 1 1 auto;
   }
 
   .toolbar button {
-    flex: 1 1 auto;
+    flex: 0 0 auto;
     min-width: 0;
   }
 

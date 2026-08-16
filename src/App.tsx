@@ -1187,7 +1187,7 @@ export default function App({
                     disabled={loading}
                     style={{ background: loading ? "#334155" : "#475569", color: "white" }}
                   >
-                    {loading ? "Refrescando..." : "Refrescar"}
+                    {loading ? "Actualizando..." : "Actualizar"}
                   </button>
                 </div>
 
