@@ -32,10 +32,32 @@ function AppWithMsal() {
 
 async function bootstrap() {
   if (USE_ENTRA) {
-  
+    // Solo limpiamos marcas de interaccion huerfanas si esta carga NO es
+    // la vuelta de un redirect real de Microsoft (si lo fuera,
+    // handleRedirectPromise() necesita esa marca intacta para completar
+    // el login correctamente). El intento anterior de este fix limpiaba
+    // la marca SIEMPRE, incluso en la propia vuelta del login, y eso
+    // rompia el login por completo (incluso en incognito). Con este
+    // guard, solo limpiamos si la URL no trae code/error/client_info,
+    // es decir, solo en cargas "normales" de la app, no en la respuesta
+    // de Microsoft tras Authenticator.
+    const isRedirectReturn = /code=|error=|client_info=/.test(window.location.href)
+
+    if (!isRedirectReturn) {
+      try {
+        Object.keys(sessionStorage)
+          .filter((k) => k.includes("interaction.status"))
+          .forEach((k) => sessionStorage.removeItem(k))
+        console.log("[MSAL] sessionStorage: marcas de interaccion huerfanas limpiadas")
+      } catch (err) {
+        console.error("[MSAL] error limpiando interaction.status:", err)
+      }
+    } else {
+      console.log("[MSAL] vuelta de redirect detectada, no se limpia interaction.status")
+    }
 
     try {
-      await msalInstance.initialize()
+      await msalInstance.initialize();
       console.log("[MSAL] initialize OK")
     } catch (err) {
       console.error("[MSAL] initialize error:", err)
