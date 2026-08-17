@@ -36,7 +36,7 @@ import HistoryTab from "./components/HistoryTab"
 import VersionModal from "./components/VersionModal"
 import { APP_VERSION } from "./version"
 
-// Flag para diferenciar entre modo Entra ID (SSO+MFA) y Token clásico.
+// Flag para diferenciar entre modo Entra ID (SSO+MFA) y Token clasico.
 const USE_ENTRA = import.meta.env.VITE_BM_USE_ENTRA === "1"
 
 async function handleExportScheduleExcel() {
@@ -324,13 +324,32 @@ const CATEGORY_DESCRIPTIONS: Record<string, string> = {
   nok: "Backups que no han terminado correctamente y que hay que corregir (Warnings y Errores).",
 }
 
-// Textos que se muestran (solo en vista movil) debajo de los KPIs "Avisos",
-// "Errores" y "Pdte. Comprobacion" cuando el Guardian pulsa sobre ellos,
+// Titulo + instrucciones que se muestran (solo en vista movil) cuando el
+// Guardian pulsa sobre los KPIs "Avisos", "Errores" o "Pdte. Comprobacion",
 // justo encima del listado de jobs filtrado por ese estado.
-const STATUS_FILTER_DESCRIPTIONS: Partial<Record<DashboardKpiFilter, string>> = {
-  warning: "Backups con estado warning.",
-  error: "Backups con estado fallido.",
-  "as400-pending": "Backups AS400 pendientes de confirmar, revisando su log.",
+const STATUS_FILTER_DESCRIPTIONS: Partial<Record<DashboardKpiFilter, { title: string; instructions: string[] }>> = {
+  warning: {
+    title: "Backups con estado Warning",
+    instructions: [
+      "Si el backup es Veeam, conectamos a VEEAM22, analizamos el log, y relanzamos si procede.",
+      "Si el backup es VDC, conectamos cloud.veeam.com y relanzamos el trabajo.",
+      "Si el backup es Barracuda, lo notificamos a explotacion@uci.com para que lo revise.",
+    ],
+  },
+  error: {
+    title: "Backups con estado fallido",
+    instructions: [
+      "Si el backup es Veeam, conectamos a VEEAM22, analizamos el log, y relanzamos.",
+      "Si el backup es VDC, conectamos cloud.veeam.com y relanzamos el trabajo.",
+      "Si el backup es Barracuda, lo notificamos a explotacion@uci.com para que lo revise.",
+    ],
+  },
+  "as400-pending": {
+    title: "Backups AS400 pendientes de confirmar, revisando su log",
+    instructions: [
+      "Sólo aparecerán backups de AS400. En el job pincharemos sobre \"Ver log\" y si vemos que únicamente aparecen los errores estipulados, pincharemos sobre Editar, marcaremos Estado \"Success\" y pondremos el comentario que consideremos.",
+    ],
+  },
 }
 
 // Props opcionales de Entra ID: solo se pasan desde main.tsx cuando
@@ -1252,7 +1271,19 @@ export default function App({
 
               {STATUS_FILTER_DESCRIPTIONS[statusFilter] && (
                 <div className="mobile-status-filter-description">
-                  {STATUS_FILTER_DESCRIPTIONS[statusFilter]}
+                  <div className="mobile-status-filter-title">
+                    {STATUS_FILTER_DESCRIPTIONS[statusFilter]!.title}
+                  </div>
+
+                  <div className="mobile-status-filter-instructions-label">
+                    INSTRUCCIONES:
+                  </div>
+
+                  <ul className="mobile-status-filter-instructions">
+                    {STATUS_FILTER_DESCRIPTIONS[statusFilter]!.instructions.map((line, idx) => (
+                      <li key={idx}>{line}</li>
+                    ))}
+                  </ul>
                 </div>
               )}
 
