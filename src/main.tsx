@@ -32,6 +32,23 @@ function AppWithMsal() {
 
 async function bootstrap() {
   if (USE_ENTRA) {
+    // Fix: limpia marcas de interaccion MSAL huerfanas que se quedan
+    // colgadas cuando el redirect a Microsoft se corta a medias en movil
+    // (la app pasa a 2º plano durante el login, Authenticator no vuelve
+    // bien a Edge, el SO mata la pestaña, etc.). Sin esto, MSAL cree que
+    // "ya hay un login en curso" y handleRedirectPromise() se queda
+    // esperando indefinidamente, mostrando "Validando sesión
+    // corporativa..." sin fin. En incognito nunca pasa porque el
+    // sessionStorage arranca limpio cada vez.
+    try {
+      Object.keys(sessionStorage)
+        .filter((k) => k.includes("interaction.status"))
+        .forEach((k) => sessionStorage.removeItem(k))
+      console.log("[MSAL] sessionStorage: marcas de interaccion huerfanas limpiadas")
+    } catch (err) {
+      console.error("[MSAL] error limpiando interaction.status:", err)
+    }
+
     try {
       await msalInstance.initialize()
       console.log("[MSAL] initialize OK")
