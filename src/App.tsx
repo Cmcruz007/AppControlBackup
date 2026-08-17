@@ -435,7 +435,7 @@ export default function App({
   }, [tab])
 
   useEffect(() => {
-    function handleUnauthorized() {
+        function handleUnauthorized() {
       if (USE_ENTRA) {
         // En modo Entra no mostramos TokenGate, pero SI reintentamos: un 401
         // aqui suele significar que MSAL aun no habia asentado el token justo
@@ -443,13 +443,31 @@ export default function App({
         // app se quedaba vacia en silencio hasta un refresco manual del
         // usuario -- esto le paso a una companera en su primer login
         // (03/08/2026, logs [AUTH] hasBearer=false repetidos).
-        const now = Date.now()
         const state = unauthorizedRetryRef.current
-
-        if (now - state.lastAt < 3000) return
+        const now = Date.now()
+        const elapsed = now - state.lastAt
 
         if (state.count >= 5) {
           setErr("No se pudo autenticar con Microsoft Entra ID. Recarga la pagina (F5).")
+          return
+        }
+
+        // Fix: en movil, justo tras volver de Authenticator, pueden llegar
+        // varios 401 muy seguidos mientras MSAL termina de asentar el token
+        // en segundo plano. Antes, si el 401 llegaba dentro de la ventana
+        // de 3s, se descartaba en silencio sin programar ningun reintento
+        // futuro, y la app se quedaba para siempre en "Cargando..." con
+        // los KPIs vacios sin llegar nunca a los 5 intentos ni mostrar el
+        // error. Ahora, en vez de descartarlo, programamos el reintento
+        // para cuando se cumpla la ventana de 3s.
+        if (elapsed < 3000) {
+          const wait = 3000 - elapsed
+          setTimeout(() => {
+            state.count += 1
+            state.lastAt = Date.now()
+            console.warn(`[AUTH] 401 en modo Entra ID, reintento programado ${state.count}/5...`)
+            refresh()
+          }, wait)
           return
         }
 
