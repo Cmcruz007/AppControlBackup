@@ -324,6 +324,15 @@ const CATEGORY_DESCRIPTIONS: Record<string, string> = {
   nok: "Backups que no han terminado correctamente y que hay que corregir (Warnings y Errores).",
 }
 
+// Textos que se muestran (solo en vista movil) debajo de los KPIs "Avisos",
+// "Errores" y "Pdte. Comprobacion" cuando el Guardian pulsa sobre ellos,
+// justo encima del listado de jobs filtrado por ese estado.
+const STATUS_FILTER_DESCRIPTIONS: Partial<Record<DashboardKpiFilter, string>> = {
+  warning: "Backups con estado warning.",
+  error: "Backups con estado fallido.",
+  "as400-pending": "Backups AS400 pendientes de confirmar, revisando su log.",
+}
+
 // Props opcionales de Entra ID: solo se pasan desde main.tsx cuando
 // USE_ENTRA=1 (ver AppWithMsal en main.tsx). En modo Token clasico
 // (USE_ENTRA=0) llegan como undefined y el badge simplemente no se pinta.
@@ -1240,6 +1249,12 @@ export default function App({
               </div>
 
               {err && <span className="error-badge">{err}</span>}
+
+              {STATUS_FILTER_DESCRIPTIONS[statusFilter] && (
+                <div className="mobile-status-filter-description">
+                  {STATUS_FILTER_DESCRIPTIONS[statusFilter]}
+                </div>
+              )}
 
               <JobTable
                 rows={filtered}

@@ -10,7 +10,8 @@
 }
 
 .kpi-group-title,
-.mobile-refresh-btn {
+.mobile-refresh-btn,
+.mobile-status-filter-description {
   display: none;
 }
 
@@ -22,21 +23,35 @@
     overflow-x: hidden;
   }
 
-.app,
-.content {
-  max-width: 100%;
-  overflow-x: hidden;
-}
+  .app,
+  .content {
+    max-width: 100%;
+    overflow-x: hidden;
+  }
 
-.app {
-  height: auto;
-  min-height: 100dvh;
-}
+  .app {
+    height: auto;
+    min-height: 100dvh;
+  }
 
-.content {
-  padding-bottom: calc(90px + env(safe-area-inset-bottom));
-}
+  .content {
+    padding-bottom: calc(90px + env(safe-area-inset-bottom));
+  }
 
+  /* Subimos el panel de filtros (toolbar: category-filter-bar + su descripcion)
+     para que quede ENTRE el texto "Ventana XX/XX/XXXX" (dentro de .window-title,
+     en .tabs, justo antes de .content) y el bloque de KPIs. El resto de
+     elementos del content (kpis, error-badge, tabla/tarjetas de jobs) conservan
+     su orden relativo original al no tener "order" explicito. */
+  .content {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .content > .toolbar {
+    order: -1;
+    margin-bottom: 14px;
+  }
 
   /* KPIs separados para guardias: sin intervención / requieren intervención */
   .kpis.kpis-mobile-grouped {
@@ -414,6 +429,23 @@
   .mobile-refresh-btn:disabled {
     opacity: .55;
     cursor: default;
+  }
+
+  /* Texto que aparece al pulsar los KPIs Avisos / Errores / Pdte. Comprobacion,
+     justo encima del listado de jobs filtrado por ese estado. */
+  .mobile-status-filter-description {
+    display: block;
+    width: 100%;
+    margin-top: -4px;
+    margin-bottom: 10px;
+    padding: 8px 10px;
+    border-radius: 10px;
+    background: rgba(15, 23, 42, .35);
+    border: 1px solid rgba(148, 163, 184, .12);
+    color: var(--text);
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1.35;
   }
 }
 
