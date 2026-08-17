@@ -22,11 +22,21 @@
     overflow-x: hidden;
   }
 
-  .app,
-  .content {
-    max-width: 100%;
-    overflow-x: hidden;
-  }
+.app,
+.content {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+.app {
+  height: auto;
+  min-height: 100dvh;
+}
+
+.content {
+  padding-bottom: calc(90px + env(safe-area-inset-bottom));
+}
+
 
   /* KPIs separados para guardias: sin intervención / requieren intervención */
   .kpis.kpis-mobile-grouped {
