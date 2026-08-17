@@ -1,5 +1,22 @@
 ### Changelog
 
+## [11.0.0] - 2026-08-17
+
+### Añadido
+- Botón circular de actualización (⟳) en la topbar móvil, entre "Actualizado a HH:mm" y el badge de login Entra ID.
+- Separación visual de los KPIs en dos bloques para guardias: "Sin intervención del Guardián" (Jobs hoy, Éxitos, En curso) y "Requieren intervención" (Avisos, Errores, Pdte. Comprobación).
+
+### Cambiado
+- Formato de "Actualizado" en móvil: se elimina el campo de segundos, mostrando solo HH:mm.
+- Textos descriptivos de los filtros (Todos, Veeam Backup, VDC, Barracuda, AS400, NOK) ampliados y clarificados para guardias.
+- Alineación del título "SITUACIÓN BACKUP DEL DÍA..." corregida para quedar exactamente debajo de "Backup Monitor Pro".
+
+### Eliminado
+- Eliminada en vista móvil la fila de Buscar/Actualizar/Enviar/Exportar/Planificador de la toolbar (el refresco pasa a la topbar).
+
+### Corregido
+- Corregido el bloqueo de scroll en navegadores móviles (Edge/Chrome Android): `.app` usaba `height: 100vh` fijo, lo que ocultaba los botones "Ver log"/"Editar" del último job bajo la barra de navegación del móvil. Sustituido por `height: auto` + `min-height: 100dvh` en `.app`, y añadido `padding-bottom` de colchón en `.content`.
+
 #### [10.0.0] - 2026-08-13
 
 ##### 🚀 Versión mayor
