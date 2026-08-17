@@ -1,5 +1,14 @@
 ### Changelog
 
+## [12.0.0] - 2026-08-17
+
+### Añadido
+- Panel de filtros (6 botones + descripción) reubicado en vista móvil: ahora aparece entre el texto "Ventana XX/XX/XXXX" y el bloque de KPIs, en vez de tras ellos.
+- Textos operativos de instrucciones para el Guardián al pulsar los KPIs "Avisos", "Errores" y "Pdte. Comprobación":
+  - Avisos → "Backups con estado Warning" + pasos según tipo de backup (Veeam/VDC/Barracuda).
+  - Errores → "Backups con estado fallido" + pasos según tipo de backup (Veeam/VDC/Barracuda).
+  - Pdte. Comprobación → "Backups AS400 pendientes de confirmar, revisando su log" + procedimiento de revisión de log y marcado manual como Success.
+
 ## [11.0.0] - 2026-08-17
 
 ### Añadido
