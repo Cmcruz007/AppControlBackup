@@ -316,12 +316,12 @@ function computeB2Kpis(inputRows: JobRowUi[]) {
 // Textos descriptivos que se muestran debajo de los 6 botones de filtro
 // (category-filter-bar), segun la categoria activa. Vista movil y escritorio.
 const CATEGORY_DESCRIPTIONS: Record<string, string> = {
-  all: "Todos los backups a comprobar.",
+  all: "Listado de todos los backups del día.",
   veeam: "Sólo backups lanzados desde Veeam Backup & Replication.",
-  vdc: "Sólo backups Veeam Data Cloud (M365).",
-  barracuda: "Sólo backups Barracuda (M365).",
-  as400: "Sólo backups IBM AS400.",
-  nok: "Backups que no han terminado correctamente y que hay que corregir.",
+  vdc: "Sólo backups de Veeam Data Cloud. Salva la plataforma de M365.",
+  barracuda: "Sólo backups de Barracuda. Es la antigua herramienta que salvaba M365. Ahora se usa de forma residual.",
+  as400: "Sólo backups de IBM AS400. El fin de semana sólo se ejecutan 2, SDB/TGT y SD.",
+  nok: "Backups que no han terminado correctamente y que hay que corregir (Warnings y Errores).",
 }
 
 // Props opcionales de Entra ID: solo se pasan desde main.tsx cuando
@@ -962,8 +962,25 @@ export default function App({
 
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <div className="meta">
-              {lastRun ? `Actualizado ${new Date(lastRun).toLocaleTimeString("es-ES")}` : "Cargando..."}
+              {lastRun
+                ? `Actualizado a ${new Date(lastRun).toLocaleTimeString("es-ES", {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                    hour12: false,
+                  })}`
+                : "Cargando..."}
             </div>
+
+            <button
+              type="button"
+              className="mobile-refresh-btn"
+              onClick={refresh}
+              disabled={loading}
+              title="Actualizar"
+              aria-label="Actualizar"
+            >
+              ↻
+            </button>
 
             {entraUsername && (
               <div
@@ -1054,54 +1071,62 @@ export default function App({
         <div className="content">
           {tab === "dashboard" && (
             <>
-              <div className="kpis">
-                <Kpi
-                  label="Jobs hoy"
-                  value={kpis.total}
-                  accentColor="#94a3b8"
-                  active={statusFilter === "all"}
-                  onClick={() => handleDashboardKpiClick("all")}
-                />
+              <div className="kpis kpis-mobile-grouped">
+                <div className="kpi-group kpi-group-ok">
+                  <div className="kpi-group-title">Sin intervención del Guardián</div>
 
-                <Kpi
-                  label="Éxitos"
-                  value={kpis.success}
-                  accentColor="#22c55e"
-                  active={statusFilter === "success"}
-                  onClick={() => handleDashboardKpiClick("success")}
-                />
+                  <Kpi
+                    label="Jobs hoy"
+                    value={kpis.total}
+                    accentColor="#94a3b8"
+                    active={statusFilter === "all"}
+                    onClick={() => handleDashboardKpiClick("all")}
+                  />
 
-                <Kpi
-                  label="Avisos"
-                  value={kpis.warning}
-                  accentColor="#f59e0b"
-                  active={statusFilter === "warning"}
-                  onClick={() => handleDashboardKpiClick("warning")}
-                />
+                  <Kpi
+                    label="Éxitos"
+                    value={kpis.success}
+                    accentColor="#22c55e"
+                    active={statusFilter === "success"}
+                    onClick={() => handleDashboardKpiClick("success")}
+                  />
 
-                <Kpi
-                  label="Errores"
-                  value={kpis.failed}
-                  accentColor="#ef4444"
-                  active={statusFilter === "error"}
-                  onClick={() => handleDashboardKpiClick("error")}
-                />
+                  <Kpi
+                    label="En curso"
+                    value={kpis.running}
+                    accentColor="#60a5fa"
+                    active={statusFilter === "running"}
+                    onClick={() => handleDashboardKpiClick("running")}
+                  />
+                </div>
 
-                <Kpi
-                  label="En curso"
-                  value={kpis.running}
-                  accentColor="#60a5fa"
-                  active={statusFilter === "running"}
-                  onClick={() => handleDashboardKpiClick("running")}
-                />
+                <div className="kpi-group kpi-group-action">
+                  <div className="kpi-group-title">Requieren intervención</div>
 
-                <Kpi
-                  label="Pdte. Comprobación"
-                  value={kpis.as400PendingReview}
-                  accentColor="#a78bfa"
-                  active={statusFilter === "as400-pending"}
-                  onClick={() => handleDashboardKpiClick("as400-pending")}
-                />
+                  <Kpi
+                    label="Avisos"
+                    value={kpis.warning}
+                    accentColor="#f59e0b"
+                    active={statusFilter === "warning"}
+                    onClick={() => handleDashboardKpiClick("warning")}
+                  />
+
+                  <Kpi
+                    label="Errores"
+                    value={kpis.failed}
+                    accentColor="#ef4444"
+                    active={statusFilter === "error"}
+                    onClick={() => handleDashboardKpiClick("error")}
+                  />
+
+                  <Kpi
+                    label="Pdte. Comprobación"
+                    value={kpis.as400PendingReview}
+                    accentColor="#a78bfa"
+                    active={statusFilter === "as400-pending"}
+                    onClick={() => handleDashboardKpiClick("as400-pending")}
+                  />
+                </div>
               </div>
 
               <div
