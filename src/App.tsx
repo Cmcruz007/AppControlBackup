@@ -1280,9 +1280,11 @@ export default function App({
                   })}
                 </div>
 
-                <div className="category-filter-description">
-                  {CATEGORY_DESCRIPTIONS[activeCategory]}
-                </div>
+                                {statusFilter === "all" && (
+                  <div className="category-filter-description">
+                    {CATEGORY_DESCRIPTIONS[activeCategory]}
+                  </div>
+                )}
               </div>
 
               {err && <span className="error-badge">{err}</span>}
