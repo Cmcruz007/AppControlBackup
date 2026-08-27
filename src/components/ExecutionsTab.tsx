@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react"
 import type { JobExecutionsResponse, CategoryFilter } from "../types/ui"
 import { api } from "../utils/api"
-
 export default function ExecutionsTab({
   jobName,
   data,
@@ -25,9 +24,7 @@ export default function ExecutionsTab({
   const [directoryNames, setDirectoryNames] = useState<string[]>([])
   const [directoryLoading, setDirectoryLoading] = useState(false)
   const [directoryError, setDirectoryError] = useState<string | null>(null)
-
   void activeCategory
-
   function normalizeJobName(value: any): string {
     if (typeof value === "string") return value.trim()
     return String(
@@ -40,7 +37,6 @@ export default function ExecutionsTab({
       ""
     ).trim()
   }
-
   function uniqueSorted(values: any[]): string[] {
     const set = new Set<string>()
     for (const value of values || []) {
@@ -51,14 +47,11 @@ export default function ExecutionsTab({
       String(a).localeCompare(String(b), "es", { sensitivity: "base" })
     )
   }
-
   async function reloadDirectoryInsideTab() {
     setDirectoryLoading(true)
     setDirectoryError(null)
-
     try {
       const collected: any[] = []
-
       try {
         const jobsRes = await api().listJobs()
         if ((jobsRes as any)?.ok && Array.isArray((jobsRes as any).jobs)) {
@@ -67,7 +60,6 @@ export default function ExecutionsTab({
       } catch {
         // fallback con refresh
       }
-
       try {
         const refreshRes = await api().refresh()
         const fullRows = Array.isArray((refreshRes as any)?.fullRows)
@@ -81,10 +73,8 @@ export default function ExecutionsTab({
       } catch {
         // si falla refresh seguimos con lo que haya de listJobs
       }
-
       const nextNames = uniqueSorted(collected)
       setDirectoryNames(nextNames)
-
       if (nextNames.length === 0) {
         setDirectoryError("No se han podido cargar jobs desde listJobs ni desde refresh.")
       }
@@ -95,7 +85,6 @@ export default function ExecutionsTab({
       setDirectoryLoading(false)
     }
   }
-
   useEffect(() => {
     const names = uniqueSorted(allJobNames || [])
     if (names.length > 0) {
@@ -103,14 +92,12 @@ export default function ExecutionsTab({
       setDirectoryError(null)
     }
   }, [allJobNames])
-
   useEffect(() => {
     if (!jobName && directoryNames.length === 0 && !directoryLoading) {
       reloadDirectoryInsideTab()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jobName, directoryNames.length])
-
   const filteredJobNames = useMemo(() => {
     const q = search.trim().toLowerCase()
     const source = directoryNames.length > 0
@@ -119,7 +106,6 @@ export default function ExecutionsTab({
     if (!q) return source
     return source.filter((name) => name.toLowerCase().includes(q))
   }, [directoryNames, allJobNames, search])
-
   function formatDate(value: any): string {
     if (!value) return "—"
     const d = new Date(value)
@@ -130,7 +116,6 @@ export default function ExecutionsTab({
       year: "numeric",
     })
   }
-
   function formatTime(value: any): string {
     if (!value) return "—"
     const d = new Date(value)
@@ -141,7 +126,6 @@ export default function ExecutionsTab({
       second: "2-digit",
     })
   }
-
   // La duración llega en dos formatos distintos segun el origen del job:
   // - AS400/Barracuda (electron/modules/graph.cjs): numero en milisegundos
   //   (durationMs), o null si no se pudo calcular.
@@ -155,14 +139,11 @@ export default function ExecutionsTab({
     if (typeof value === "string") {
       const trimmed = value.trim()
       if (!trimmed) return "—"
-
       const parts = trimmed.split(":").map((p) => parseInt(p, 10))
       if (parts.some((p) => Number.isNaN(p))) return "—"
-
       let h = 0
       let m = 0
       let s = 0
-
       if (parts.length === 3) {
         [h, m, s] = parts
       } else if (parts.length === 2) {
@@ -170,25 +151,31 @@ export default function ExecutionsTab({
       } else {
         return "—"
       }
-
       if (h > 0) return `${h}h ${String(m).padStart(2, "0")}m ${String(s).padStart(2, "0")}s`
       if (m > 0) return `${m}m ${String(s).padStart(2, "0")}s`
       return `${s}s`
     }
-
     const n = Number(value)
     if (!Number.isFinite(n) || n <= 0) return "—"
-
     const totalSeconds = Math.round(n / 1000)
     const h = Math.floor(totalSeconds / 3600)
     const m = Math.floor((totalSeconds % 3600) / 60)
     const s = totalSeconds % 60
-
     if (h > 0) return `${h}h ${String(m).padStart(2, "0")}m ${String(s).padStart(2, "0")}s`
     if (m > 0) return `${m}m ${String(s).padStart(2, "0")}s`
     return `${s}s`
   }
-
+  // Fallback: cuando la ejecución no trae duration/durationMs (p.ej. VDC
+  // Exchange), calculamos la duración directamente a partir de start/end
+  // en vez de mostrar siempre "—".
+  function computeDurationFallback(start: any, end: any): number | null {
+    if (!start || !end) return null
+    const s = new Date(start).getTime()
+    const e = new Date(end).getTime()
+    if (Number.isNaN(s) || Number.isNaN(e)) return null
+    const ms = e - s
+    return ms > 0 ? ms : null
+  }
   function statusLabel(status: any): string {
     const s = String(status || "").toLowerCase()
     if (s === "success") return "SUCCESS"
@@ -198,7 +185,6 @@ export default function ExecutionsTab({
     if (s === "pending") return "PENDING"
     return String(status || "—").toUpperCase()
   }
-
   // ─────────────────────────────────────────────────────────────
   // Directorio de jobs
   // ─────────────────────────────────────────────────────────────
@@ -229,7 +215,6 @@ export default function ExecutionsTab({
           <h2 style={{ margin: 0, fontSize: 20, color: "var(--text)" }}>
             Directorio de Jobs
           </h2>
-
           <span
             style={{
               display: "inline-flex",
@@ -245,9 +230,7 @@ export default function ExecutionsTab({
           >
             {filteredJobNames.length} jobs
           </span>
-
           <div className="flex-spacer" />
-
           <input
             placeholder="Buscar job..."
             value={search}
@@ -259,7 +242,6 @@ export default function ExecutionsTab({
               minWidth: 220,
             }}
           />
-
           <button
             className="secondary"
             style={{ padding: "6px 12px", fontSize: 12 }}
@@ -270,13 +252,11 @@ export default function ExecutionsTab({
             {directoryLoading ? "Cargando..." : "Recargar"}
           </button>
         </div>
-
         {directoryError && (
           <div className="error-badge" style={{ marginBottom: 12 }}>
             {directoryError}
           </div>
         )}
-
         <div
           style={{
             maxWidth: 860,
@@ -295,7 +275,6 @@ export default function ExecutionsTab({
                 <th style={{ width: 130, textAlign: "right" }}>Acción</th>
               </tr>
             </thead>
-
             <tbody>
               {directoryLoading && filteredJobNames.length === 0 && (
                 <tr>
@@ -304,7 +283,6 @@ export default function ExecutionsTab({
                   </td>
                 </tr>
               )}
-
               {!directoryLoading && filteredJobNames.length === 0 && (
                 <tr>
                   <td colSpan={2} style={{ padding: 18, color: "#9ca3af", textAlign: "center" }}>
@@ -312,7 +290,6 @@ export default function ExecutionsTab({
                   </td>
                 </tr>
               )}
-
               {filteredJobNames.map((name) => (
                 <tr key={name} className="compact-row">
                   <td
@@ -349,21 +326,19 @@ export default function ExecutionsTab({
       </div>
     )
   }
-
   // ─────────────────────────────────────────────────────────────
   // Historial de un job
   // ─────────────────────────────────────────────────────────────
   const executions = Array.isArray((data as any)?.executions)
     ? (data as any).executions
     : []
-
   return (
     <div
       style={{
         background: "var(--bg)",
         color: "var(--text)",
         minHeight: "calc(100vh - 150px)",
-        padding: 0,
+        padding: "0 32px",
       }}
     >
       <div
@@ -386,11 +361,9 @@ export default function ExecutionsTab({
         >
           ← Volver
         </button>
-
         <h2 style={{ margin: 0, fontSize: 20, color: "var(--text)" }}>
           Historial: {jobName}
         </h2>
-
         <span
           style={{
             display: "inline-flex",
@@ -407,19 +380,16 @@ export default function ExecutionsTab({
           Total: {executions.length}
         </span>
       </div>
-
       {loading && (
         <div style={{ color: "#9ca3af", marginBottom: 12 }}>
           Cargando historial...
         </div>
       )}
-
       {error && (
         <div className="error-badge" style={{ marginBottom: 12 }}>
           {error}
         </div>
       )}
-
       <div
         style={{
           background: "var(--panel)",
@@ -429,26 +399,35 @@ export default function ExecutionsTab({
           boxShadow: "0 10px 30px rgba(0,0,0,.18)",
         }}
       >
-        <table className="compact-table" style={{ margin: 0 }}>
+        <table className="compact-table" style={{ margin: 0, tableLayout: "fixed", width: "100%" }}>
+          <colgroup>
+            <col style={{ width: 140 }} />
+            <col style={{ width: 110 }} />
+            <col style={{ width: 110 }} />
+            <col style={{ width: 150 }} />
+            <col style={{ width: 130 }} />
+          </colgroup>
           <thead>
             <tr>
               <th>Fecha</th>
               <th>Inicio</th>
+              <th>Fin</th>
               <th>Duración</th>
               <th style={{ textAlign: "right" }}>Estado</th>
             </tr>
           </thead>
-
           <tbody>
             {executions.map((x: any, idx: number) => {
-              const dateValue = x?.start || x?.end || x?.date || x?.receivedDateTime
-              const status = String(x?.status || "pending").toLowerCase()
-
+              const dateValue = x?.start ?? x?.end ?? x?.date ?? x?.receivedDateTime
+              const status = String(x?.status ?? "pending").toLowerCase()
+              const durationValue =
+                x?.duration ?? x?.durationMs ?? computeDurationFallback(x?.start, x?.end)
               return (
-                <tr key={x?.id || `${jobName}-${idx}`} className={`compact-row row-${status}`}>
+                <tr key={x?.id ?? `${jobName}-${idx}`} className={`compact-row row-${status}`}>
                   <td>{formatDate(dateValue)}</td>
-                  <td className="tabular">{formatTime(x?.start || dateValue)}</td>
-                  <td className="tabular">{formatDuration(x?.duration ?? x?.durationMs)}</td>
+                  <td className="tabular">{formatTime(x?.start ?? dateValue)}</td>
+                  <td className="tabular">{formatTime(x?.end)}</td>
+                  <td className="tabular">{formatDuration(durationValue)}</td>
                   <td style={{ textAlign: "right" }}>
                     <span className={`badge ${status}`}>
                       {statusLabel(status)}
@@ -457,10 +436,9 @@ export default function ExecutionsTab({
                 </tr>
               )
             })}
-
             {!loading && executions.length === 0 && (
               <tr>
-                <td colSpan={4} style={{ padding: 18, color: "#9ca3af", textAlign: "center" }}>
+                <td colSpan={5} style={{ padding: 18, color: "#9ca3af", textAlign: "center" }}>
                   No hay ejecuciones
                 </td>
               </tr>
