@@ -383,41 +383,89 @@ function parseBarracudaBody(body) {
 }
 
 /**
- * VDC — sin acceso al portal:
- *   Solo podemos inferir el estado del subject/bodyPreview.
- *   Start/End/Duration: null (limitación documentada).
+ * Helper VDC: parsea la fecha/hora de finalizacion real que trae el correo
+ * de Veeam Data Cloud, con el formato REAL confirmado por Carlos sobre
+ * correos reales de producción:
+ *
+ *   '... completed with warnings on August 28, 2026 at 00:57:03 UTC.'
+ *   '... completed successfully on August 23, 2026 at 23:41:31 UTC.'
+ *
+ * Es decir: "on <Month> <day>, <year> at <HH:MM:SS> UTC" (sin dia de la
+ * semana, con coma tras el dia, y "at" antes de la hora). El patron
+ * anterior ("finished on Wed Aug 05 2026 00:58:14 UTC") NUNCA coincidia
+ * con el formato real, por lo que endTime siempre era null.
+ *
+ * Devuelve null si no hay match (comportamiento gracioso, no lanza error).
+ */
+function parseVdcTimestamp(clean) {
+  const match = clean.match(
+    /on\s+([A-Za-z]+)\s+(\d{1,2}),\s+(\d{4})\s+at\s+(\d{2}):(\d{2}):(\d{2})\s+UTC/i
+  )
+  if (!match) return null
+
+  const months = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 }
+  const monthKey = match[1].slice(0, 3).toLowerCase()
+  const month = months[monthKey]
+  if (month === undefined) return null
+
+  const day = parseInt(match[2], 10)
+  const year = parseInt(match[3], 10)
+  const hh = parseInt(match[4], 10)
+  const mi = parseInt(match[5], 10)
+  const ss = parseInt(match[6], 10)
+
+  return new Date(Date.UTC(year, month, day, hh, mi, ss))
+}
+
+/**
+ * VDC — parsea el cuerpo del correo de notificación de Veeam Data Cloud.
+ *
+ * FIX 1 (llamada): esta función recibía antes SIEMPRE bodyContent vacío
+ * porque en getJobExecutionsFromEmailHistory se llamaba como
+ * parseVdcBody(m) en lugar de parseVdcBody(m, bodyContent). Ver llamada
+ * corregida mas abajo, en getJobExecutionsFromEmailHistory.
+ *
+ * FIX 2 (patron de fecha): el patron usado antes ("finished on Wed Aug 05
+ * 2026 00:58:14 UTC", con dia de semana) NUNCA coincide con el formato
+ * real de estos correos ("... on August 28, 2026 at 00:57:03 UTC."). Con
+ * ambos bugs juntos, endTime era siempre null y, al construir la
+ * ejecucion final, tanto start como end caian en el mismo fallback
+ * (m.receivedDateTime), lo que producia Inicio = Fin en todas las filas y
+ * Duracion vacia.
+ *
+ * IMPORTANTE (pendiente, no resuelto aqui): el correo de VDC NUNCA incluye
+ * una hora de INICIO real, solo la hora de finalizacion. Segun lo indicado
+ * por Carlos, el INICIO de los jobs VDC es un horario FIJO por tipo de
+ * backup (ya calculado en otro modulo para el dashboard principal, ajustado
+ * a la ventana operacional). Esa logica de horario fijo NO esta replicada
+ * aqui: startTime se devuelve como null hasta que se integre ese mismo
+ * horario fijo en esta función (pendiente de localizar el fichero fuente,
+ * probablemente electron/modules/engine.cjs). Por tanto, durationMs
+ * tampoco se puede calcular aqui sin un start real.
  */
 function parseVdcBody(message, bodyContent = '') {
+  const clean = String(bodyContent || '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  const lowerClean = clean.toLowerCase()
   const subjectPreview = `${message?.subject || ''} ${message?.bodyPreview || ''}`.toLowerCase()
-  const fullText = `${subjectPreview} ${String(bodyContent || '')}`.toLowerCase()
+  const fullText = `${subjectPreview} ${lowerClean}`
 
   let status = 'success'
 
-  if (fullText.includes('failed') || fullText.includes('error')) status = 'failed'
+  if (fullText.includes('completed successfully')) status = 'success'
+  else if (fullText.includes('completed with warnings')) status = 'warning'
+  else if (fullText.includes('completed with errors') || fullText.includes('failed')) status = 'failed'
+  else if (fullText.includes('error')) status = 'failed'
   else if (fullText.includes('warning')) status = 'warning'
-  else if (fullText.includes('successfully')) status = 'success'
 
-  // Ej: "finished on Wed Aug 05 2026 00:58:14 UTC"
-  let endTime = null
-  const clean = String(bodyContent || '').replace(/\s+/g, ' ').trim()
-  const finishedMatch = clean.match(/finished on\s+\w+\s+(\w+)\s+(\d{1,2})\s+(\d{4})\s+(\d{2}):(\d{2}):(\d{2})\s+UTC/i)
-
-  if (finishedMatch) {
-    const months = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 }
-    const monthKey = finishedMatch[1].slice(0, 3).toLowerCase()
-    const month = months[monthKey]
-
-    if (month !== undefined) {
-      const day = parseInt(finishedMatch[2], 10)
-      const year = parseInt(finishedMatch[3], 10)
-      const hh = parseInt(finishedMatch[4], 10)
-      const mi = parseInt(finishedMatch[5], 10)
-      const ss = parseInt(finishedMatch[6], 10)
-      endTime = new Date(Date.UTC(year, month, day, hh, mi, ss))
-    }
-  }
+  const endTime = parseVdcTimestamp(clean)
 
   return {
+    // Pendiente: horario fijo por tipo de job VDC (ver comentario arriba).
     startTime: null,
     endTime: endTime ? endTime.toISOString() : null,
     durationMs: null,
@@ -524,7 +572,7 @@ async function getJobExecutionsFromEmailHistory(cfg, rule, jobName, limit = 200,
     .sort((a, b) => new Date(b.receivedDateTime).getTime() - new Date(a.receivedDateTime).getTime())
     .slice(0, Number(limit) || 200)
 
- 
+
 
   // Procesar en paralelo controlado
   const executions = []
@@ -557,7 +605,9 @@ async function getJobExecutionsFromEmailHistory(cfg, rule, jobName, limit = 200,
           bodyContent = cleanVdcFooter(bodyContent)
 
           logContent = bodyContent
-          parsed = parseVdcBody(m)
+          // FIX: antes se llamaba parseVdcBody(m) sin bodyContent, por lo
+          // que endTime siempre salia null (ver comentario en parseVdcBody).
+          parsed = parseVdcBody(m, bodyContent)
         } else if (m?.hasAttachments) {
           // Fallback: si tiene adjunto pero la regla no se detecta como AS400,
           // intentamos cargarlo igualmente para que el modal pueda mostrarlo.
