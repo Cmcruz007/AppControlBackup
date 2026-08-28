@@ -579,6 +579,54 @@ function inferExecutionStatusFromRule(message, rule) {
   return { status: 'pending', reason: 'Correo recibido' }
 }
 
+// ─── Matching de asunto (subject) ───────────────────────────────────────────
+
+// Escape para regex
+function escapeRegex(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/**
+ * FIX (cambio de formato de asunto en Veeam Data Cloud, detectado por Carlos
+ * el 28/08/2026): hasta el 18/08/2026 los correos de VDC llegaban con el
+ * asunto en formato:
+ *
+ *   Backup run of the policy "Exchange Online" finished with warning
+ *
+ * y desde el 19/08/2026 Veeam Data Cloud cambio el formato a:
+ *
+ *   [Cliente] "Exchange Online" policy run completed with warnings
+ *
+ * La regla guardada en Configuracion (p.ej. 'el asunto contiene: "Exchange
+ * Online" policy') se comparaba ANTES como un unico string literal con
+ * ORDEN fijo (ver buildSubjectMatcherLegacy mas abajo, ya no se usa). Como
+ * el orden de las palabras se invirtio entre el formato antiguo y el
+ * nuevo, la regla solo matcheaba el formato nuevo, y todo el historial
+ * anterior al cambio (backups reales, no un problema de retencion ni de
+ * limite de resultados) se descartaba en silencio en el filtro.
+ *
+ * Con este fix, en vez de exigir el string COMPLETO en un orden concreto,
+ * se parte el filtro en palabras sueltas (tokens) y se exige que TODAS
+ * esas palabras aparezcan en el asunto, en cualquier orden y posicion.
+ * Esto cubre ambos formatos (antiguo y nuevo) sin perder historial, y
+ * sigue siendo "palabra exacta" (usa los mismos limites de palabra que
+ * antes) para evitar falsos positivos tipo "Backup SD" matcheando dentro
+ * de "Backup SDB/TGT".
+ */
+function buildSubjectTokenRegexes(subjectRule) {
+  if (!subjectRule) return []
+
+  return String(subjectRule)
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((token) => new RegExp(`(^|[^a-z0-9])${escapeRegex(token)}([^a-z0-9]|$)`, 'i'))
+}
+
+function subjectMatchesAllTokens(subject, tokenRegexes) {
+  if (!tokenRegexes.length) return true
+  return tokenRegexes.every((re) => re.test(subject))
+}
+
 // ─── Histórico de ejecuciones desde correos ─────────────────────────────────
 
 async function getJobExecutionsFromEmailHistory(cfg, rule, jobName, limit = 200, sinceDays = 60) {
@@ -619,14 +667,12 @@ async function getJobExecutionsFromEmailHistory(cfg, rule, jobName, limit = 200,
     jobName
   )
 
-  // Escape para regex
-  const escapeRegex = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-
-  // Para subjectRule construimos una regex que matchea como "palabra exacta"
-  // para evitar que "Backup SD" matche "Backup SDB/TGT"
-  const subjectRegex = subjectRule
-    ? new RegExp(`(^|[^a-z0-9])${escapeRegex(subjectRule)}([^a-z0-9]|$)`, 'i')
-    : null
+  // Ver comentario detallado en buildSubjectTokenRegexes(): en vez de un
+  // unico regex que exige el string completo en un orden fijo, usamos
+  // varios regex (uno por palabra) y exigimos que TODOS matcheen, en
+  // cualquier orden. Esto es lo que corrige el problema de VDC con el
+  // cambio de formato de asunto de Veeam Data Cloud (19/08/2026).
+  const subjectTokenRegexes = buildSubjectTokenRegexes(subjectRule)
 
   const matchedEmails = (Array.isArray(allEmails) ? allEmails : [])
     .filter((m) => {
@@ -643,9 +689,11 @@ async function getJobExecutionsFromEmailHistory(cfg, rule, jobName, limit = 200,
         fromAddr.includes(senderRule) ||
         senderRule.includes(fromAddr)
 
-      // Matching estricto: SIEMPRE exige el token del servicio.
-      // Ya no hay fallback laxo tipo (isBarracuda && /backup\s+report/i).
-      const subjectOk = !subjectRegex || subjectRegex.test(subject)
+      // Matching estricto por palabras sueltas (ver buildSubjectTokenRegexes):
+      // SIEMPRE exige que todos los tokens del filtro esten presentes en el
+      // asunto, en cualquier orden. Ya no hay fallback laxo tipo
+      // (isBarracuda && /backup\s+report/i).
+      const subjectOk = subjectMatchesAllTokens(subject, subjectTokenRegexes)
 
       return senderOk && subjectOk
     })
@@ -855,6 +903,8 @@ module.exports = {
   computeVdcFixedStart,
   keepFirstEmailPerDayVdc,
   detectRuleSource,
+  buildSubjectTokenRegexes,
+  subjectMatchesAllTokens,
 
   // Limpieza logs
   cleanBarracudaFooter,
