@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react"
 import type { JobExecutionsResponse, CategoryFilter } from "../types/ui"
 import { api } from "../utils/api"
-
 export default function ExecutionsTab({
   jobName,
   data,
@@ -25,9 +24,7 @@ export default function ExecutionsTab({
   const [directoryNames, setDirectoryNames] = useState<string[]>([])
   const [directoryLoading, setDirectoryLoading] = useState(false)
   const [directoryError, setDirectoryError] = useState<string | null>(null)
-
   void activeCategory
-
   function normalizeJobName(value: any): string {
     if (typeof value === "string") return value.trim()
     return String(
@@ -40,7 +37,6 @@ export default function ExecutionsTab({
       ""
     ).trim()
   }
-
   function uniqueSorted(values: any[]): string[] {
     const set = new Set<string>()
     for (const value of values || []) {
@@ -51,14 +47,11 @@ export default function ExecutionsTab({
       String(a).localeCompare(String(b), "es", { sensitivity: "base" })
     )
   }
-
   async function reloadDirectoryInsideTab() {
     setDirectoryLoading(true)
     setDirectoryError(null)
-
     try {
       const collected: any[] = []
-
       try {
         const jobsRes = await api().listJobs()
         if ((jobsRes as any)?.ok && Array.isArray((jobsRes as any).jobs)) {
@@ -67,7 +60,6 @@ export default function ExecutionsTab({
       } catch {
         // fallback con refresh
       }
-
       try {
         const refreshRes = await api().refresh()
         const fullRows = Array.isArray((refreshRes as any)?.fullRows)
@@ -81,10 +73,8 @@ export default function ExecutionsTab({
       } catch {
         // si falla refresh seguimos con lo que haya de listJobs
       }
-
       const nextNames = uniqueSorted(collected)
       setDirectoryNames(nextNames)
-
       if (nextNames.length === 0) {
         setDirectoryError("No se han podido cargar jobs desde listJobs ni desde refresh.")
       }
@@ -95,7 +85,6 @@ export default function ExecutionsTab({
       setDirectoryLoading(false)
     }
   }
-
   useEffect(() => {
     const names = uniqueSorted(allJobNames || [])
     if (names.length > 0) {
@@ -103,14 +92,12 @@ export default function ExecutionsTab({
       setDirectoryError(null)
     }
   }, [allJobNames])
-
   useEffect(() => {
     if (!jobName && directoryNames.length === 0 && !directoryLoading) {
       reloadDirectoryInsideTab()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jobName, directoryNames.length])
-
   const filteredJobNames = useMemo(() => {
     const q = search.trim().toLowerCase()
     const source = directoryNames.length > 0
@@ -119,7 +106,6 @@ export default function ExecutionsTab({
     if (!q) return source
     return source.filter((name) => name.toLowerCase().includes(q))
   }, [directoryNames, allJobNames, search])
-
   function formatDate(value: any): string {
     if (!value) return "—"
     const d = new Date(value)
@@ -130,7 +116,6 @@ export default function ExecutionsTab({
       year: "numeric",
     })
   }
-
   function formatTime(value: any): string {
     if (!value) return "—"
     const d = new Date(value)
@@ -141,7 +126,48 @@ export default function ExecutionsTab({
       second: "2-digit",
     })
   }
-
+  // La duración llega en dos formatos distintos segun el origen del job:
+  // - AS400/Barracuda (electron/modules/graph.cjs): numero en milisegundos
+  //   (durationMs), o null si no se pudo calcular.
+  // - Veeam/VDC-SQL (electron/modules/sql.cjs): STRING ya formateado por
+  //   formatDurationMs(), tipo "01:32:39" o "32:39" (o '' si no hay dato).
+  // Antes solo se contemplaba el caso numerico (Number(ms)), por lo que
+  // Number("01:32:39") daba NaN y la celda siempre mostraba "—" para TODOS
+  // los jobs Veeam/VDC-SQL, aunque el dato sí existiera. Ahora se detecta el
+  // tipo y se formatea cada caso, sin tocar ninguno de los dos backends.
+  function formatDuration(value: any): string {
+    if (typeof value === "string") {
+      const trimmed = value.trim()
+      if (!trimmed) return "—"
+      const parts = trimmed.split(":").map((p) => parseInt(p, 10))
+      if (parts.some((p) => Number.isNaN(p))) return "—"
+      let h = 0
+      let m = 0
+      let s = 0
+      if (parts.length === 3) {
+        [h, m, s] = parts
+      } else if (parts.length === 2) {
+        [m, s] = parts
+      } else {
+        return "—"
+      }
+      if (h > 0) return `${h}h ${String(m).padStart(2, "0")}m ${String(s).padStart(2, "0")}s`
+      if (m > 0) return `${m}m ${String(s).padStart(2, "0")}s`
+      return `${s}s`
+    }
+    const n = Number(value)
+    if (!Number.isFinite(n) || n <= 0) return "—"
+    const totalSeconds = Math.round(n / 1000)
+    const h = Math.floor(totalSeconds / 3600)
+    const m = Math.floor((totalSeconds % 3600) / 60)
+    const s = totalSeconds % 60
+    if (h > 0) return `${h}h ${String(m).padStart(2, "0")}m ${String(s).padStart(2, "0")}s`
+    if (m > 0) return `${m}m ${String(s).padStart(2, "0")}s`
+    return `${s}s`
+  }
+  // Fallback: cuando la ejecución no trae duration/durationMs (p.ej. algun
+  // origen puntual sin ese campo), calculamos la duración directamente a
+  // partir de start/end en vez de mostrar siempre "—".
   function computeDurationFallback(start: any, end: any): number | null {
     if (!start || !end) return null
     const s = new Date(start).getTime()
@@ -150,50 +176,6 @@ export default function ExecutionsTab({
     const ms = e - s
     return ms > 0 ? ms : null
   }
-
-  // La duración llega en formatos distintos segun el origen del job:
-  // - AS400/Barracuda: numero en milisegundos (durationMs), o null si no
-  //   se pudo calcular.
-  // - Veeam/VDC-SQL: STRING ya formateado, tipo "01:32:39" o "32:39"
-  //   (o '' vacío si no hay dato -- OJO: '' no es null/undefined).
-  function formatDuration(value: any): string {
-    if (typeof value === "string") {
-      const trimmed = value.trim()
-      if (!trimmed) return "—"
-
-      const parts = trimmed.split(":").map((p) => parseInt(p, 10))
-      if (parts.some((p) => Number.isNaN(p))) return "—"
-
-      let h = 0
-      let m = 0
-      let s = 0
-
-      if (parts.length === 3) {
-        [h, m, s] = parts
-      } else if (parts.length === 2) {
-        [m, s] = parts
-      } else {
-        return "—"
-      }
-
-      if (h > 0) return `${h}h ${String(m).padStart(2, "0")}m ${String(s).padStart(2, "0")}s`
-      if (m > 0) return `${m}m ${String(s).padStart(2, "0")}s`
-      return `${s}s`
-    }
-
-    const n = Number(value)
-    if (!Number.isFinite(n) || n <= 0) return "—"
-
-    const totalSeconds = Math.round(n / 1000)
-    const h = Math.floor(totalSeconds / 3600)
-    const m = Math.floor((totalSeconds % 3600) / 60)
-    const s = totalSeconds % 60
-
-    if (h > 0) return `${h}h ${String(m).padStart(2, "0")}m ${String(s).padStart(2, "0")}s`
-    if (m > 0) return `${m}m ${String(s).padStart(2, "0")}s`
-    return `${s}s`
-  }
-
   function statusLabel(status: any): string {
     const s = String(status || "").toLowerCase()
     if (s === "success") return "SUCCESS"
@@ -203,7 +185,6 @@ export default function ExecutionsTab({
     if (s === "pending") return "PENDING"
     return String(status || "—").toUpperCase()
   }
-
   // ─────────────────────────────────────────────────────────────
   // Directorio de jobs
   // ─────────────────────────────────────────────────────────────
@@ -234,7 +215,6 @@ export default function ExecutionsTab({
           <h2 style={{ margin: 0, fontSize: 20, color: "var(--text)" }}>
             Directorio de Jobs
           </h2>
-
           <span
             style={{
               display: "inline-flex",
@@ -250,9 +230,7 @@ export default function ExecutionsTab({
           >
             {filteredJobNames.length} jobs
           </span>
-
           <div className="flex-spacer" />
-
           <input
             placeholder="Buscar job..."
             value={search}
@@ -264,7 +242,6 @@ export default function ExecutionsTab({
               minWidth: 220,
             }}
           />
-
           <button
             className="secondary"
             style={{ padding: "6px 12px", fontSize: 12 }}
@@ -275,13 +252,11 @@ export default function ExecutionsTab({
             {directoryLoading ? "Cargando..." : "Recargar"}
           </button>
         </div>
-
         {directoryError && (
           <div className="error-badge" style={{ marginBottom: 12 }}>
             {directoryError}
           </div>
         )}
-
         <div
           style={{
             maxWidth: 860,
@@ -293,18 +268,13 @@ export default function ExecutionsTab({
             boxShadow: "0 10px 30px rgba(0,0,0,.18)",
           }}
         >
-          <table className="compact-table" style={{ margin: 0, tableLayout: "fixed", width: "100%" }}>
-            <colgroup>
-              <col />
-              <col style={{ width: 140 }} />
-            </colgroup>
+          <table className="compact-table" style={{ margin: 0 }}>
             <thead>
               <tr>
                 <th>Job</th>
-                <th style={{ textAlign: "right" }}>Acción</th>
+                <th style={{ width: 130, textAlign: "right" }}>Acción</th>
               </tr>
             </thead>
-
             <tbody>
               {directoryLoading && filteredJobNames.length === 0 && (
                 <tr>
@@ -313,7 +283,6 @@ export default function ExecutionsTab({
                   </td>
                 </tr>
               )}
-
               {!directoryLoading && filteredJobNames.length === 0 && (
                 <tr>
                   <td colSpan={2} style={{ padding: 18, color: "#9ca3af", textAlign: "center" }}>
@@ -321,7 +290,6 @@ export default function ExecutionsTab({
                   </td>
                 </tr>
               )}
-
               {filteredJobNames.map((name) => (
                 <tr key={name} className="compact-row">
                   <td
@@ -358,22 +326,19 @@ export default function ExecutionsTab({
       </div>
     )
   }
-
   // ─────────────────────────────────────────────────────────────
   // Historial de un job
   // ─────────────────────────────────────────────────────────────
   const executions = Array.isArray((data as any)?.executions)
     ? (data as any).executions
     : []
-
   return (
     <div
       style={{
         background: "var(--bg)",
         color: "var(--text)",
         minHeight: "calc(100vh - 150px)",
-        padding: "0 24px",
-        boxSizing: "border-box",
+        padding: "0 32px",
       }}
     >
       <div
@@ -382,10 +347,9 @@ export default function ExecutionsTab({
           display: "flex",
           alignItems: "center",
           gap: 12,
-          width: "100%",
-          maxWidth: 1280,
+          marginBottom: 16,
+          maxWidth: 760,
           margin: "0 auto 16px auto",
-          boxSizing: "border-box",
           background: "var(--panel)",
           border: "1px solid var(--border)",
           borderRadius: 10,
@@ -399,11 +363,9 @@ export default function ExecutionsTab({
         >
           ← Volver
         </button>
-
         <h2 style={{ margin: 0, fontSize: 20, color: "var(--text)" }}>
           Historial: {jobName}
         </h2>
-
         <span
           style={{
             display: "inline-flex",
@@ -420,39 +382,44 @@ export default function ExecutionsTab({
           Total: {executions.length}
         </span>
       </div>
-
       {loading && (
-        <div style={{ color: "#9ca3af", marginBottom: 12 }}>
+        <div style={{ color: "#9ca3af", marginBottom: 12, maxWidth: 760, margin: "0 auto 12px auto" }}>
           Cargando historial...
         </div>
       )}
-
       {error && (
-        <div className="error-badge" style={{ marginBottom: 12 }}>
+        <div className="error-badge" style={{ marginBottom: 12, maxWidth: 760, margin: "0 auto 12px auto" }}>
           {error}
         </div>
       )}
-
       <div
         style={{
-          width: "100%",
-          maxWidth: 1280,
-          margin: "0 auto",
-          boxSizing: "border-box",
           background: "var(--panel)",
           border: "1px solid var(--border)",
           borderRadius: 10,
           overflow: "hidden",
           boxShadow: "0 10px 30px rgba(0,0,0,.18)",
+          maxWidth: 760,
+          margin: "0 auto",
         }}
       >
-        <table className="compact-table" style={{ margin: 0, width: "100%", tableLayout: "fixed" }}>
+        {/*
+          Anchos del colgroup en PORCENTAJE (no en px). Con table-layout:
+          fixed, si los anchos en px suman menos que el ancho real del
+          contenedor, el navegador vuelca todo el sobrante en la ULTIMA
+          columna (por eso ESTADO se disparaba hacia la derecha dejando un
+          hueco enorme). Usando % que suman 100%, la tabla siempre reparte
+          el ancho de forma proporcional, sin sobrante que volcar. Además
+          el panel ahora tiene maxWidth:760 + margin:auto, para que quede
+          centrado y con márgenes iguales a ambos lados en pantallas anchas.
+        */}
+        <table className="compact-table" style={{ margin: 0, tableLayout: "fixed", width: "100%" }}>
           <colgroup>
-            <col style={{ width: 100 }} />
-            <col style={{ width: 85 }} />
-            <col style={{ width: 85 }} />
-            <col style={{ width: 110 }} />
-            <col />
+            <col style={{ width: "22%" }} />
+            <col style={{ width: "16%" }} />
+            <col style={{ width: "16%" }} />
+            <col style={{ width: "24%" }} />
+            <col style={{ width: "22%" }} />
           </colgroup>
           <thead>
             <tr>
@@ -463,29 +430,17 @@ export default function ExecutionsTab({
               <th style={{ textAlign: "right" }}>Estado</th>
             </tr>
           </thead>
-
           <tbody>
             {executions.map((x: any, idx: number) => {
               const dateValue = x?.start ?? x?.end ?? x?.date ?? x?.receivedDateTime
               const status = String(x?.status ?? "pending").toLowerCase()
-
-              const rawDuration = x?.duration
-              const hasRawDuration =
-                rawDuration !== undefined && rawDuration !== null && String(rawDuration).trim() !== ""
-              const durationValue = hasRawDuration
-                ? rawDuration
-                : (x?.durationMs ?? computeDurationFallback(x?.start, x?.end))
-
-              // Mitigación visual: si backend envía el mismo timestamp en
-              // start y end (caso VDC actualmente), no mostramos un FIN
-              // falso duplicado -- se corrige de raíz en el backend.
-              const sameStartEnd = x?.start && x?.end && x.start === x.end
-
+              const durationValue =
+                x?.duration ?? x?.durationMs ?? computeDurationFallback(x?.start, x?.end)
               return (
                 <tr key={x?.id ?? `${jobName}-${idx}`} className={`compact-row row-${status}`}>
                   <td>{formatDate(dateValue)}</td>
                   <td className="tabular">{formatTime(x?.start ?? dateValue)}</td>
-                  <td className="tabular">{sameStartEnd ? "—" : formatTime(x?.end)}</td>
+                  <td className="tabular">{formatTime(x?.end)}</td>
                   <td className="tabular">{formatDuration(durationValue)}</td>
                   <td style={{ textAlign: "right" }}>
                     <span className={`badge ${status}`}>
@@ -495,7 +450,6 @@ export default function ExecutionsTab({
                 </tr>
               )
             })}
-
             {!loading && executions.length === 0 && (
               <tr>
                 <td colSpan={5} style={{ padding: 18, color: "#9ca3af", textAlign: "center" }}>
