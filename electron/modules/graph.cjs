@@ -1,5 +1,6 @@
 // electron/modules/graph.cjs
-const { logGraphError } = require('./utils.cjs')
+const { logGraphError, pad2 } = require('./utils.cjs')
+const { getOperationalWindow } = require('./engine.cjs')
 
 // ─── Limpieza de logs email ─────────────────────────────────────────────────
 
@@ -433,15 +434,12 @@ function parseVdcTimestamp(clean) {
  * (m.receivedDateTime), lo que producia Inicio = Fin en todas las filas y
  * Duracion vacia.
  *
- * IMPORTANTE (pendiente, no resuelto aqui): el correo de VDC NUNCA incluye
- * una hora de INICIO real, solo la hora de finalizacion. Segun lo indicado
- * por Carlos, el INICIO de los jobs VDC es un horario FIJO por tipo de
- * backup (ya calculado en otro modulo para el dashboard principal, ajustado
- * a la ventana operacional). Esa logica de horario fijo NO esta replicada
- * aqui: startTime se devuelve como null hasta que se integre ese mismo
- * horario fijo en esta función (pendiente de localizar el fichero fuente,
- * probablemente electron/modules/engine.cjs). Por tanto, durationMs
- * tampoco se puede calcular aqui sin un start real.
+ * NOTA: el correo de VDC NUNCA incluye una hora de INICIO real, solo la
+ * hora de finalizacion. El INICIO se calcula aparte, en
+ * getJobExecutionsFromEmailHistory, mediante computeVdcFixedStart() (ver
+ * mas abajo), ya que ese calculo necesita el nombre del job y la ventana
+ * operacional (electron/modules/engine.cjs), datos que esta funcion no
+ * tiene disponibles.
  */
 function parseVdcBody(message, bodyContent = '') {
   const clean = String(bodyContent || '')
@@ -465,12 +463,94 @@ function parseVdcBody(message, bodyContent = '') {
   const endTime = parseVdcTimestamp(clean)
 
   return {
-    // Pendiente: horario fijo por tipo de job VDC (ver comentario arriba).
+    // Se rellena en getJobExecutionsFromEmailHistory via computeVdcFixedStart.
     startTime: null,
     endTime: endTime ? endTime.toISOString() : null,
     durationMs: null,
     status,
   }
+}
+
+/**
+ * Horario FIJO de inicio por tipo de backup VDC, expresado como offset en
+ * minutos desde el inicio de la ventana operacional (18:00 local, ver
+ * getOperationalWindow en electron/modules/engine.cjs).
+ *
+ * Valores confirmados por Carlos a partir del registro de actividad real
+ * del portal Veeam Data Cloud ("Backup Policy Started") y re-verificados
+ * contra el listado real de ejecuciones del portal (start/end reales):
+ *   - Sharepoint + Teams -> 22:00 (18:00 + 4h00)  [mismo dia de la ventana]
+ *   - Exchange Online    -> 01:30 (18:00 + 7h30)  [dia siguiente]
+ *   - OneDrive           -> 02:30 (18:00 + 8h30)  [dia siguiente]
+ *
+ * Si en el futuro cambia el horario de alguna politica VDC en el portal,
+ * este es el UNICO sitio a actualizar.
+ */
+const VDC_FIXED_SCHEDULE = [
+  { match: /sharepoint|teams/i, offsetMinutes: 4 * 60 },      // 22:00
+  { match: /exchange/i, offsetMinutes: 7 * 60 + 30 },         // 01:30
+  { match: /onedrive/i, offsetMinutes: 8 * 60 + 30 },         // 02:30
+]
+
+/**
+ * Calcula el inicio fijo de un job VDC a partir de su nombre y de la hora
+ * de finalizacion real (extraida del correo). Devuelve null si el nombre
+ * del job no coincide con ningun tipo VDC conocido, o si el resultado no
+ * es coherente (inicio posterior al fin).
+ */
+function computeVdcFixedStart(jobName, endTime) {
+  if (!endTime || Number.isNaN(endTime.getTime())) return null
+
+  const rule = VDC_FIXED_SCHEDULE.find((r) => r.match.test(jobName || ''))
+  if (!rule) return null
+
+  const { inicio } = getOperationalWindow(endTime)
+  const start = new Date(inicio.getTime() + rule.offsetMinutes * 60000)
+
+  // Salvaguarda: si el inicio calculado quedara despues del fin real (no
+  // deberia pasar con estos offsets salvo que el "end" usado no sea el de
+  // la ejecucion original, p.ej. por un correo de relanzamiento del mismo
+  // dia -- ver filtrado "primer correo del dia" en
+  // getJobExecutionsFromEmailHistory), no lo usamos para evitar
+  // duraciones negativas o incoherentes.
+  if (start.getTime() >= endTime.getTime()) return null
+
+  return start
+}
+
+/**
+ * Para VDC, Veeam puede enviar MAS DE UN correo de finalizacion el mismo
+ * dia para el mismo job (reintentos/relanzamientos internos del propio
+ * servicio VDC, no controlados por nosotros). Segun confirma Carlos, solo
+ * la PRIMERA ejecucion del dia tiene el horario de inicio FIJO conocido
+ * (VDC_FIXED_SCHEDULE); los correos posteriores del mismo dia deben
+ * omitirse por completo, no se procesan como ejecuciones independientes.
+ *
+ * Esta funcion agrupa los correos ya filtrados por job (mismo remitente +
+ * asunto) por dia calendario de recepcion, y para cada dia se queda
+ * UNICAMENTE con el correo recibido mas temprano (el primero), descartando
+ * el resto. Se aplica ANTES del recorte por "limit" para no perder
+ * cobertura de dias antiguos si un dia reciente concentra muchos correos
+ * de reintento.
+ */
+function keepFirstEmailPerDayVdc(emails) {
+  const firstOfDay = new Map()
+
+  for (const m of emails) {
+    const received = m?.receivedDateTime ? new Date(m.receivedDateTime) : null
+    if (!received || Number.isNaN(received.getTime())) continue
+
+    const dayKey = `${received.getFullYear()}-${pad2(received.getMonth() + 1)}-${pad2(received.getDate())}`
+    const current = firstOfDay.get(dayKey)
+
+    if (!current || received.getTime() < new Date(current.receivedDateTime).getTime()) {
+      firstOfDay.set(dayKey, m)
+    }
+  }
+
+  return [...firstOfDay.values()].sort(
+    (a, b) => new Date(b.receivedDateTime).getTime() - new Date(a.receivedDateTime).getTime()
+  )
 }
 
 // ─── Status fallback (cuando el parser no devuelve nada) ────────────────────
@@ -548,7 +628,7 @@ async function getJobExecutionsFromEmailHistory(cfg, rule, jobName, limit = 200,
     ? new RegExp(`(^|[^a-z0-9])${escapeRegex(subjectRule)}([^a-z0-9]|$)`, 'i')
     : null
 
-  const filtered = (Array.isArray(allEmails) ? allEmails : [])
+  const matchedEmails = (Array.isArray(allEmails) ? allEmails : [])
     .filter((m) => {
       const fromAddr = normalizeText(m?.from?.emailAddress?.address)
       const senderAddr = normalizeText(m?.sender?.emailAddress?.address)
@@ -570,9 +650,15 @@ async function getJobExecutionsFromEmailHistory(cfg, rule, jobName, limit = 200,
       return senderOk && subjectOk
     })
     .sort((a, b) => new Date(b.receivedDateTime).getTime() - new Date(a.receivedDateTime).getTime())
-    .slice(0, Number(limit) || 200)
 
+  // Para VDC: nos quedamos solo con el primer correo de cada dia (la
+  // ejecucion "oficial" con horario fijo), antes de aplicar el limite, para
+  // no perder dias antiguos si un dia reciente concentra varios reintentos.
+  const preLimitEmails = ruleSource === 'vdc'
+    ? keepFirstEmailPerDayVdc(matchedEmails)
+    : matchedEmails
 
+  const filtered = preLimitEmails.slice(0, Number(limit) || 200)
 
   // Procesar en paralelo controlado
   const executions = []
@@ -608,6 +694,21 @@ async function getJobExecutionsFromEmailHistory(cfg, rule, jobName, limit = 200,
           // FIX: antes se llamaba parseVdcBody(m) sin bodyContent, por lo
           // que endTime siempre salia null (ver comentario en parseVdcBody).
           parsed = parseVdcBody(m, bodyContent)
+
+          // El correo de VDC solo trae la hora de FIN. El INICIO es fijo
+          // por tipo de backup (ver VDC_FIXED_SCHEDULE / computeVdcFixedStart
+          // mas arriba), confirmado contra el portal de Veeam Data Cloud.
+          // Gracias al filtrado "primer correo del dia" (keepFirstEmailPerDayVdc)
+          // este endTime siempre corresponde a la ejecucion original, por lo
+          // que el calculo del inicio fijo debe ser coherente.
+          if (parsed?.endTime) {
+            const endDate = new Date(parsed.endTime)
+            const fixedStart = computeVdcFixedStart(jobName, endDate)
+            if (fixedStart) {
+              parsed.startTime = fixedStart.toISOString()
+              parsed.durationMs = endDate.getTime() - fixedStart.getTime()
+            }
+          }
         } else if (m?.hasAttachments) {
           // Fallback: si tiene adjunto pero la regla no se detecta como AS400,
           // intentamos cargarlo igualmente para que el modal pueda mostrarlo.
@@ -685,6 +786,9 @@ async function getJobExecutionsFromEmailHistory(cfg, rule, jobName, limit = 200,
   // (segun start, con fallback a end/receivedDateTime), nos quedamos solo con la
   // que tiene datos realmente parseados (parsed === true); si ninguna se pudo
   // parsear, nos quedamos con la mas reciente de ese dia para no perder el rastro.
+  // Para VDC este paso ya no deberia encontrar colisiones (el filtrado
+  // "primer correo del dia" ya dejo como maximo 1 ejecucion por dia), pero se
+  // mantiene sin cambios como red de seguridad generica para todas las fuentes.
   const getDayKey = (execution) => {
     const raw = execution?.start || execution?.end || execution?.receivedDateTime
     if (!raw) return null
@@ -748,6 +852,8 @@ module.exports = {
   parseAs400Attachment,
   parseBarracudaBody,
   parseVdcBody,
+  computeVdcFixedStart,
+  keepFirstEmailPerDayVdc,
   detectRuleSource,
 
   // Limpieza logs
