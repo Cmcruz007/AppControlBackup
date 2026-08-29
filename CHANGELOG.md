@@ -478,3 +478,4 @@
 #### [1.0.0] - 2026-06-18
 
 Primera versión estable en producción 24/7 como aplicación web multi-usuario.
+
