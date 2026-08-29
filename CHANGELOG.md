@@ -1,5 +1,28 @@
 ### Changelog
 
+## [13.0.0] - 2026-08-29
+
+### Añadido
+- Columna **Fin** en el Historial de Ejecuciones (antes solo mostraba Fecha, Inicio, Duración y Estado), disponible para todos los orígenes (Veeam, VDC, Barracuda, AS400).
+- VDC (Veeam Data Cloud): horario de inicio **fijo** por tipo de política, calculado sobre la ventana operacional (18:00), ya que el correo de Veeam Data Cloud nunca informa de la hora de inicio real:
+  - VDC Exchange → 01:30
+  - VDC OneDrive → 02:30
+  - VDC Sharepoint y Teams → 22:00 (día anterior de la ventana)
+- Historial de Ejecuciones: objetivo de mostrar hasta 30 ejecuciones para jobs VDC, Barracuda y AS400 (antes limitado a 200 sin garantía real de cobertura de días).
+
+### Corregido
+- Historial de Ejecuciones: la **Duración** aparecía vacía ("—") en múltiples casos porque el fallback de cálculo (Fin − Inicio) no se disparaba cuando el backend enviaba el campo `duration` como cadena vacía (`""`) en vez de `null`/`undefined`. Corregido para detectar explícitamente ambos casos.
+- Historial de Ejecuciones: anchos de columna incorrectos y margen lateral inconsistente. Causa: `table-layout: fixed` con anchos de `colgroup` en píxeles dentro de un contenedor más ancho que la suma de columnas, lo que volcaba todo el espacio sobrante en la última columna (Estado). Corregido usando anchos en porcentaje y panel centrado con ancho máximo fijo.
+- VDC: el cálculo de Fin/Estado partía siempre de `receivedDateTime` (hora de recepción del correo) en vez de la hora real de finalización, porque `parseVdcBody` se invocaba sin pasarle el cuerpo del correo. Corregido pasando el cuerpo real al parser.
+- VDC: Veeam Data Cloud cambió el formato del **asunto** de sus correos el 19/08/2026 (de `Backup run of the policy "X"` a `"X" policy run`). La regla de coincidencia exigía el asunto como string literal con un orden fijo de palabras, por lo que todo el histórico anterior al cambio se descartaba en silencio aunque fueran backups reales. Corregido comparando por palabras sueltas (sin exigir orden), válido para ambos formatos.
+- VDC: el patrón de fecha de finalización solo reconocía el formato nuevo de correo (`"...on August 28, 2026 at 00:57:03 UTC"`). El formato real de la ejecución automática/programada (`"...finished on Tue Aug 11 2026 23:45:01 UTC..."`, con día de la semana) no se reconocía, dejando Inicio = Fin y Duración vacía. Corregido para reconocer ambos formatos.
+- VDC: el estado de la ejecución se marcaba incorrectamente como **ERROR** en correos que en realidad eran WARNING. Causa: el disclaimer legal presente en todos los correos de Veeam Data Cloud ("Warning and error messages are often informational...") contiene la palabra "error", y al no coincidir el texto exacto esperado (`"completed with warnings"` en plural) con el real (`"completed with warning"` en singular), el código caía en un fallback que detectaba esa palabra suelta del disclaimer. Corregido con detección por frase completa (con "s" opcional) y eliminación del fallback de palabra suelta.
+- Historial AS400/Barracuda: la deduplicación de correos por día podía descartar, antes de intentar parsear, el único correo del día que sí contenía un adjunto/log válido (caso real detectado: correo "LOG Backup SD" recibido antes que el correo con el log parseable del mismo día). Corregido para conservar todos los correos candidatos de cada día y dejar que la deduplicación posterior elija el que sí se pudo parsear.
+
+### Pendiente conocido
+- Verificar en producción, tras el despliegue, que VDC, Barracuda y AS400 alcanzan las 30 ejecuciones objetivo en el Historial (o el máximo real disponible si algún job lleva menos de 90 días activo).
+- Aplicar manualmente en `server.js` (`app.get('/api/jobs/executions/:jobName')`) el cambio de `sinceDays` de 60 a 90, para asegurar margen suficiente de días candidatos antes de recortar a 30.
+
 ## [12.0.0] - 2026-08-17
 
 ### Añadido
