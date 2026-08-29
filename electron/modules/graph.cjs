@@ -383,55 +383,67 @@ function parseBarracudaBody(body) {
   }
 }
 
+const VDC_MONTHS = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 }
+
+// Construye un Date UTC a partir de las partes ya extraidas por regex.
+// Devuelve null si el nombre del mes no se reconoce (defensivo).
+function buildVdcUtcDate(monthName, day, year, hh, mi, ss) {
+  const monthKey = String(monthName).slice(0, 3).toLowerCase()
+  const month = VDC_MONTHS[monthKey]
+  if (month === undefined) return null
+
+  return new Date(Date.UTC(
+    parseInt(year, 10),
+    month,
+    parseInt(day, 10),
+    parseInt(hh, 10),
+    parseInt(mi, 10),
+    parseInt(ss, 10),
+  ))
+}
+
 /**
  * Helper VDC: parsea la fecha/hora de finalizacion real que trae el correo
- * de Veeam Data Cloud.
+ * de Veeam Data Cloud. Veeam Data Cloud ha usado DOS formatos de cuerpo
+ * distintos segun la fecha del correo (ambos confirmados por Carlos con
+ * capturas/copias de correos reales):
  *
- * FORMATO REAL (confirmado por Carlos con captura de pantalla de un correo
- * real de la EJECUCION AUTOMATICA/PROGRAMADA -- la unica que controlamos):
+ * FORMATO NUEVO (correos recibidos desde el 19/08/2026), ej.:
+ *   '... completed with warnings on August 28, 2026 at 00:57:03 UTC.'
+ *   Patron: "on <Mes> <dia>, <año> at <HH:MM:SS> UTC"
+ *   (con coma tras el dia, "at" antes de la hora, SIN dia de la semana).
  *
- *   Asunto: 'Backup run of the policy "Exchange Online" finished with warning'
- *   Cuerpo: 'The backup "Exchange Online" for Union de Creditos Inmobiliarios
- *            EFC S.A that finished on Mon Aug 10 2026 23:51:03 UTC has
- *            completed with warning.'
+ * FORMATO ANTIGUO (correos recibidos hasta el 18/08/2026), ej.:
+ *   '...that finished on Tue Aug 11 2026 23:45:01 UTC has completed with warning.'
+ *   Patron: "on <DiaSemana> <Mes> <dia> <año> <HH:MM:SS> UTC"
+ *   (CON dia de la semana, SIN coma, SIN "at").
  *
- * Patron: "finished on <dia semana> <mes abrev> <dia> <año> <HH:MM:SS> UTC"
- * (con dia de la semana, SIN coma, SIN "at"). Este es el patron PRINCIPAL.
- *
- * Se mantiene como variante de respaldo (por si Veeam usa otra plantilla en
- * correos de relanzamiento, que no controlamos pero tampoco queremos que
- * rompan el parseo si llegaran a procesarse):
- *   "... completed with warnings on August 28, 2026 at 00:57:03 UTC."
- * Patron: "on <mes completo>, <dia> <año> at <HH:MM:SS> UTC" (sin dia de
- * semana, con coma, con "at").
+ * Se prueba primero el formato nuevo (mas frecuente a dia de hoy) y, si no
+ * hay match, se prueba el antiguo. Devuelve null si ninguno coincide
+ * (comportamiento gracioso, no lanza error).
  */
 function parseVdcTimestamp(clean) {
-  // Patron PRINCIPAL: formato real de la ejecucion automatica/programada.
-  let match = clean.match(
-    /finished\s+on\s+[A-Za-z]+\s+([A-Za-z]+)\s+(\d{1,2})\s+(\d{4})\s+(\d{2}):(\d{2}):(\d{2})\s+UTC/i
+  const newFormatMatch = clean.match(
+    /on\s+([A-Za-z]+)\s+(\d{1,2}),\s+(\d{4})\s+at\s+(\d{2}):(\d{2}):(\d{2})\s+UTC/i
   )
-
-  // Fallback: variante alternativa (posible plantilla de relanzamiento).
-  if (!match) {
-    match = clean.match(
-      /on\s+([A-Za-z]+)\s+(\d{1,2}),\s+(\d{4})\s+at\s+(\d{2}):(\d{2}):(\d{2})\s+UTC/i
+  if (newFormatMatch) {
+    return buildVdcUtcDate(
+      newFormatMatch[1], newFormatMatch[2], newFormatMatch[3],
+      newFormatMatch[4], newFormatMatch[5], newFormatMatch[6],
     )
   }
 
-  if (!match) return null
+  const oldFormatMatch = clean.match(
+    /on\s+\w+\s+([A-Za-z]+)\s+(\d{1,2})\s+(\d{4})\s+(\d{2}):(\d{2}):(\d{2})\s+UTC/i
+  )
+  if (oldFormatMatch) {
+    return buildVdcUtcDate(
+      oldFormatMatch[1], oldFormatMatch[2], oldFormatMatch[3],
+      oldFormatMatch[4], oldFormatMatch[5], oldFormatMatch[6],
+    )
+  }
 
-  const months = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 }
-  const monthKey = match[1].slice(0, 3).toLowerCase()
-  const month = months[monthKey]
-  if (month === undefined) return null
-
-  const day = parseInt(match[2], 10)
-  const year = parseInt(match[3], 10)
-  const hh = parseInt(match[4], 10)
-  const mi = parseInt(match[5], 10)
-  const ss = parseInt(match[6], 10)
-
-  return new Date(Date.UTC(year, month, day, hh, mi, ss))
+  return null
 }
 
 /**
@@ -442,18 +454,24 @@ function parseVdcTimestamp(clean) {
  * parseVdcBody(m) en lugar de parseVdcBody(m, bodyContent). Ver llamada
  * corregida mas abajo, en getJobExecutionsFromEmailHistory.
  *
- * FIX 2 (patron de fecha): corregido para reconocer el formato REAL de la
- * ejecucion automatica/programada de VDC (ver comentario en
- * parseVdcTimestamp mas arriba). El patron anterior no reconocia el
- * formato con dia de la semana, por lo que endTime salia null para las
- * ejecuciones automaticas reales.
+ * FIX 2 (fecha, dos formatos): ver parseVdcTimestamp mas arriba. El correo
+ * de VDC NUNCA incluye una hora de INICIO real, solo la de finalizacion.
+ * El INICIO se calcula aparte, en getJobExecutionsFromEmailHistory,
+ * mediante computeVdcFixedStart(), ya que ese calculo necesita el nombre
+ * del job y la ventana operacional (electron/modules/engine.cjs).
  *
- * NOTA: el correo de VDC NUNCA incluye una hora de INICIO real, solo la
- * hora de finalizacion. El INICIO se calcula aparte, en
- * getJobExecutionsFromEmailHistory, mediante computeVdcFixedStart() (ver
- * mas abajo), ya que ese calculo necesita el nombre del job y la ventana
- * operacional (electron/modules/engine.cjs), datos que esta funcion no
- * tiene disponibles.
+ * FIX 3 (estado incorrecto -- detectado por Carlos con un correo real del
+ * 12/08/2026): el cuerpo real dice "...has completed with warning." (SIN
+ * la "s" final), pero el codigo anterior solo comprobaba el string exacto
+ * "completed with warnings" (CON "s"), copiado del formato nuevo. Al no
+ * coincidir, el codigo caia en un fallback generico que buscaba la palabra
+ * suelta "error" en cualquier parte del texto -- y el propio disclaimer
+ * que Veeam incluye en TODOS los correos ("Warning and error messages are
+ * often informational...") contiene la palabra "error", disparando
+ * incorrectamente el estado ERROR incluso en backups correctos con solo
+ * un aviso. Se sustituye por regex con la "s" opcional
+ * (warnings?/errors?) y se elimina el fallback de palabra suelta
+ * "error"/"warning", que era la causa raiz del falso ERROR.
  */
 function parseVdcBody(message, bodyContent = '') {
   const clean = String(bodyContent || '')
@@ -466,12 +484,23 @@ function parseVdcBody(message, bodyContent = '') {
   const subjectPreview = `${message?.subject || ''} ${message?.bodyPreview || ''}`.toLowerCase()
   const fullText = `${subjectPreview} ${lowerClean}`
 
-  let status = 'success'
+  // Orden de comprobacion: de mas especifico a menos especifico. En cuanto
+  // una frase completa ("completed successfully/with warning(s)/with
+  // error(s)") coincide, se fija el estado y no se sigue evaluando -- así
+  // el disclaimer generico ("warning and error messages...") nunca llega
+  // a ser el que decide el estado.
+  let status = null
 
-  if (fullText.includes('completed successfully')) status = 'success'
-  else if (fullText.includes('completed with errors') || fullText.includes('failed')) status = 'failed'
-  else if (fullText.includes('error')) status = 'failed'
-  else if (fullText.includes('warning')) status = 'warning'
+  if (/completed\s+successfully/i.test(fullText)) {
+    status = 'success'
+  } else if (/completed\s+with\s+warnings?\b/i.test(fullText)) {
+    status = 'warning'
+  } else if (/completed\s+with\s+errors?\b/i.test(fullText) || /\bfailed\b/i.test(fullText)) {
+    status = 'failed'
+  }
+  // Si ninguna frase coincide, status queda en null y el llamador
+  // (getJobExecutionsFromEmailHistory) cae al fallback generico basado en
+  // successWord/errorWord de la regla (inferExecutionStatusFromRule).
 
   const endTime = parseVdcTimestamp(clean)
 
@@ -533,19 +562,18 @@ function computeVdcFixedStart(jobName, endTime) {
 
 /**
  * Para VDC, Veeam puede enviar MAS DE UN correo de finalizacion el mismo
- * dia para el mismo job (relanzamientos/reintentos internos del propio
- * servicio VDC, no controlados por nosotros). Segun confirma Carlos, SOLO
- * la ejecucion automatica/programada (la PRIMERA del dia) es la que
- * controlamos, y tiene el horario de inicio FIJO conocido
- * (VDC_FIXED_SCHEDULE); los correos posteriores del mismo dia (relanzamientos)
- * deben omitirse por completo, no se procesan como ejecuciones independientes.
+ * dia para el mismo job (reintentos/relanzamientos internos del propio
+ * servicio VDC, no controlados por nosotros). Segun confirma Carlos, solo
+ * la PRIMERA ejecucion del dia tiene el horario de inicio FIJO conocido
+ * (VDC_FIXED_SCHEDULE); los correos posteriores del mismo dia deben
+ * omitirse por completo, no se procesan como ejecuciones independientes.
  *
  * Esta funcion agrupa los correos ya filtrados por job (mismo remitente +
  * asunto) por dia calendario de recepcion, y para cada dia se queda
  * UNICAMENTE con el correo recibido mas temprano (el primero), descartando
  * el resto. Se aplica ANTES del recorte por "limit" para no perder
  * cobertura de dias antiguos si un dia reciente concentra muchos correos
- * de relanzamiento.
+ * de reintento.
  */
 function keepFirstEmailPerDayVdc(emails) {
   const firstOfDay = new Map()
@@ -593,6 +621,54 @@ function inferExecutionStatusFromRule(message, rule) {
   return { status: 'pending', reason: 'Correo recibido' }
 }
 
+// ─── Matching de asunto (subject) ───────────────────────────────────────────
+
+// Escape para regex
+function escapeRegex(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/**
+ * FIX (cambio de formato de asunto en Veeam Data Cloud, detectado por Carlos
+ * el 28/08/2026): hasta el 18/08/2026 los correos de VDC llegaban con el
+ * asunto en formato:
+ *
+ *   Backup run of the policy "Exchange Online" finished with warning
+ *
+ * y desde el 19/08/2026 Veeam Data Cloud cambio el formato a:
+ *
+ *   [Cliente] "Exchange Online" policy run completed with warnings
+ *
+ * La regla guardada en Configuracion (p.ej. 'el asunto contiene: "Exchange
+ * Online" policy') se comparaba ANTES como un unico string literal con
+ * ORDEN fijo. Como el orden de las palabras se invirtio entre el formato
+ * antiguo y el nuevo, la regla solo matcheaba el formato nuevo, y todo el
+ * historial anterior al cambio (backups reales, no un problema de
+ * retencion ni de limite de resultados) se descartaba en silencio en el
+ * filtro.
+ *
+ * Con este fix, en vez de exigir el string COMPLETO en un orden concreto,
+ * se parte el filtro en palabras sueltas (tokens) y se exige que TODAS
+ * esas palabras aparezcan en el asunto, en cualquier orden y posicion.
+ * Esto cubre ambos formatos (antiguo y nuevo) sin perder historial, y
+ * sigue siendo "palabra exacta" (usa los mismos limites de palabra que
+ * antes) para evitar falsos positivos tipo "Backup SD" matcheando dentro
+ * de "Backup SDB/TGT".
+ */
+function buildSubjectTokenRegexes(subjectRule) {
+  if (!subjectRule) return []
+
+  return String(subjectRule)
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((token) => new RegExp(`(^|[^a-z0-9])${escapeRegex(token)}([^a-z0-9]|$)`, 'i'))
+}
+
+function subjectMatchesAllTokens(subject, tokenRegexes) {
+  if (!tokenRegexes.length) return true
+  return tokenRegexes.every((re) => re.test(subject))
+}
+
 // ─── Histórico de ejecuciones desde correos ─────────────────────────────────
 
 async function getJobExecutionsFromEmailHistory(cfg, rule, jobName, limit = 200, sinceDays = 60) {
@@ -633,14 +709,12 @@ async function getJobExecutionsFromEmailHistory(cfg, rule, jobName, limit = 200,
     jobName
   )
 
-  // Escape para regex
-  const escapeRegex = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-
-  // Para subjectRule construimos una regex que matchea como "palabra exacta"
-  // para evitar que "Backup SD" matche "Backup SDB/TGT"
-  const subjectRegex = subjectRule
-    ? new RegExp(`(^|[^a-z0-9])${escapeRegex(subjectRule)}([^a-z0-9]|$)`, 'i')
-    : null
+  // Ver comentario detallado en buildSubjectTokenRegexes(): en vez de un
+  // unico regex que exige el string completo en un orden fijo, usamos
+  // varios regex (uno por palabra) y exigimos que TODOS matcheen, en
+  // cualquier orden. Esto es lo que corrige el problema de VDC con el
+  // cambio de formato de asunto de Veeam Data Cloud (19/08/2026).
+  const subjectTokenRegexes = buildSubjectTokenRegexes(subjectRule)
 
   const matchedEmails = (Array.isArray(allEmails) ? allEmails : [])
     .filter((m) => {
@@ -657,18 +731,19 @@ async function getJobExecutionsFromEmailHistory(cfg, rule, jobName, limit = 200,
         fromAddr.includes(senderRule) ||
         senderRule.includes(fromAddr)
 
-      // Matching estricto: SIEMPRE exige el token del servicio.
-      // Ya no hay fallback laxo tipo (isBarracuda && /backup\s+report/i).
-      const subjectOk = !subjectRegex || subjectRegex.test(subject)
+      // Matching estricto por palabras sueltas (ver buildSubjectTokenRegexes):
+      // SIEMPRE exige que todos los tokens del filtro esten presentes en el
+      // asunto, en cualquier orden. Ya no hay fallback laxo tipo
+      // (isBarracuda && /backup\s+report/i).
+      const subjectOk = subjectMatchesAllTokens(subject, subjectTokenRegexes)
 
       return senderOk && subjectOk
     })
     .sort((a, b) => new Date(b.receivedDateTime).getTime() - new Date(a.receivedDateTime).getTime())
 
   // Para VDC: nos quedamos solo con el primer correo de cada dia (la
-  // ejecucion automatica/programada, la unica que controlamos), antes de
-  // aplicar el limite, para no perder dias antiguos si un dia reciente
-  // concentra varios relanzamientos.
+  // ejecucion "oficial" con horario fijo), antes de aplicar el limite, para
+  // no perder dias antiguos si un dia reciente concentra varios reintentos.
   const preLimitEmails = ruleSource === 'vdc'
     ? keepFirstEmailPerDayVdc(matchedEmails)
     : matchedEmails
@@ -714,8 +789,8 @@ async function getJobExecutionsFromEmailHistory(cfg, rule, jobName, limit = 200,
           // por tipo de backup (ver VDC_FIXED_SCHEDULE / computeVdcFixedStart
           // mas arriba), confirmado contra el portal de Veeam Data Cloud.
           // Gracias al filtrado "primer correo del dia" (keepFirstEmailPerDayVdc)
-          // este endTime siempre corresponde a la ejecucion automatica
-          // original, por lo que el calculo del inicio fijo debe ser coherente.
+          // este endTime siempre corresponde a la ejecucion original, por lo
+          // que el calculo del inicio fijo debe ser coherente.
           if (parsed?.endTime) {
             const endDate = new Date(parsed.endTime)
             const fixedStart = computeVdcFixedStart(jobName, endDate)
@@ -871,6 +946,8 @@ module.exports = {
   computeVdcFixedStart,
   keepFirstEmailPerDayVdc,
   detectRuleSource,
+  buildSubjectTokenRegexes,
+  subjectMatchesAllTokens,
 
   // Limpieza logs
   cleanBarracudaFooter,
