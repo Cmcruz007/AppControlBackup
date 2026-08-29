@@ -552,28 +552,28 @@ function computeVdcFixedStart(jobName, endTime) {
   // Salvaguarda: si el inicio calculado quedara despues del fin real (no
   // deberia pasar con estos offsets salvo que el "end" usado no sea el de
   // la ejecucion original, p.ej. por un correo de relanzamiento del mismo
-  // dia -- ver filtrado "primer correo del dia" en
-  // getJobExecutionsFromEmailHistory), no lo usamos para evitar
-  // duraciones negativas o incoherentes.
+  // dia -- ver filtrado de dias en getJobExecutionsFromEmailHistory), no
+  // lo usamos para evitar duraciones negativas o incoherentes.
   if (start.getTime() >= endTime.getTime()) return null
 
   return start
 }
 
 /**
- * Para VDC, Veeam puede enviar MAS DE UN correo de finalizacion el mismo
- * dia para el mismo job (reintentos/relanzamientos internos del propio
+ * VDC: Veeam puede enviar MAS DE UN correo de finalizacion el mismo dia
+ * para el mismo job (relanzamientos/reintentos internos del propio
  * servicio VDC, no controlados por nosotros). Segun confirma Carlos, solo
  * la PRIMERA ejecucion del dia tiene el horario de inicio FIJO conocido
  * (VDC_FIXED_SCHEDULE); los correos posteriores del mismo dia deben
- * omitirse por completo, no se procesan como ejecuciones independientes.
+ * omitirse por completo. Como en VDC no hay adjunto que perder (solo
+ * importa la hora de fin extraida del cuerpo), es seguro descartar el
+ * resto de correos del dia ANTES de procesarlos.
  *
- * Esta funcion agrupa los correos ya filtrados por job (mismo remitente +
- * asunto) por dia calendario de recepcion, y para cada dia se queda
- * UNICAMENTE con el correo recibido mas temprano (el primero), descartando
- * el resto. Se aplica ANTES del recorte por "limit" para no perder
- * cobertura de dias antiguos si un dia reciente concentra muchos correos
- * de reintento.
+ * Agrupa los correos por dia calendario de recepcion y, para cada dia, se
+ * queda UNICAMENTE con el correo recibido mas temprano (el primero),
+ * descartando el resto. Se aplica ANTES del recorte por "limit" para no
+ * perder cobertura de dias antiguos si un dia reciente concentra muchos
+ * correos de relanzamiento.
  */
 function keepFirstEmailPerDayVdc(emails) {
   const firstOfDay = new Map()
@@ -593,6 +593,58 @@ function keepFirstEmailPerDayVdc(emails) {
   return [...firstOfDay.values()].sort(
     (a, b) => new Date(b.receivedDateTime).getTime() - new Date(a.receivedDateTime).getTime()
   )
+}
+
+/**
+ * Barracuda y AS400: a diferencia de VDC, estos correos pueden traer un
+ * ADJUNTO imprescindible para parsear start/end/duration reales (p.ej. el
+ * .txt "QPQUPRFIL.txt" de AS400 con el log "Trabajo arrancado el.../
+ * finalizado el..."). Si el mismo dia llega mas de un correo (p.ej. un
+ * primer "LOG Backup SD" cuyo adjunto no trae el patron esperado, seguido
+ * de un segundo correo que si lo trae -- este caso ya estaba documentado
+ * en el codigo antes de este fix), NO podemos descartar candidatos de un
+ * dia antes de intentar parsear su adjunto, o podriamos perder para
+ * siempre el unico correo del dia que si tenia el log valido.
+ *
+ * Por eso, para estas dos fuentes NO usamos keepFirstEmailPerDayVdc
+ * (descarte ciego pre-parseo). En su lugar, esta funcion selecciona los
+ * "maxDays" dias calendario MAS RECIENTES que tengan al menos un correo
+ * candidato, y devuelve TODOS los correos de esos dias (no solo el
+ * primero). Asi, mas abajo se procesan (se intenta parsear el adjunto de)
+ * TODOS los candidatos de esos dias, y la deduplicacion final por dia
+ * (bestByDay, ver getJobExecutionsFromEmailHistory) elige, dentro de cada
+ * dia, el correo que si se pudo parsear correctamente -- exactamente el
+ * comportamiento que ya existia antes de introducir el objetivo de "30
+ * ejecuciones", pero ahora garantizando cobertura de maxDays dias reales
+ * distintos en vez de un simple corte por numero de correos.
+ *
+ * `emails` debe venir ya ordenado por receivedDateTime descendente (como
+ * hace matchedEmails en getJobExecutionsFromEmailHistory).
+ */
+function keepAllEmailsForLastNDays(emails, maxDays) {
+  const dayKeyOf = (m) => {
+    const received = m?.receivedDateTime ? new Date(m.receivedDateTime) : null
+    if (!received || Number.isNaN(received.getTime())) return null
+    return `${received.getFullYear()}-${pad2(received.getMonth() + 1)}-${pad2(received.getDate())}`
+  }
+
+  const seenDays = new Set()
+  const orderedDays = []
+
+  for (const m of emails) {
+    const key = dayKeyOf(m)
+    if (key && !seenDays.has(key)) {
+      seenDays.add(key)
+      orderedDays.push(key)
+    }
+  }
+
+  const topDays = new Set(orderedDays.slice(0, Math.max(1, Number(maxDays) || 30)))
+
+  return emails.filter((m) => {
+    const key = dayKeyOf(m)
+    return key ? topDays.has(key) : false
+  })
 }
 
 // ─── Status fallback (cuando el parser no devuelve nada) ────────────────────
@@ -741,14 +793,40 @@ async function getJobExecutionsFromEmailHistory(cfg, rule, jobName, limit = 200,
     })
     .sort((a, b) => new Date(b.receivedDateTime).getTime() - new Date(a.receivedDateTime).getTime())
 
-  // Para VDC: nos quedamos solo con el primer correo de cada dia (la
-  // ejecucion "oficial" con horario fijo), antes de aplicar el limite, para
-  // no perder dias antiguos si un dia reciente concentra varios reintentos.
-  const preLimitEmails = (ruleSource === 'vdc' || ruleSource === 'barracuda' || ruleSource === 'as400')
+  // FIX (objetivo "30 ejecuciones" para VDC, Barracuda y AS400):
+  //
+  // - VDC: no hay adjunto que perder (solo importa la hora extraida del
+  //   cuerpo), asi que es seguro descartar candidatos de un dia ANTES de
+  //   parsear -> keepFirstEmailPerDayVdc (comportamiento sin cambios).
+  //
+  // - Barracuda y AS400: SI pueden depender de un adjunto/cuerpo concreto
+  //   para poder parsear start/end/duration reales (ver el caso real
+  //   "LOG Backup SD" con adjunto QPQUPRFIL.txt aportado por Carlos). Si
+  //   descartamos candidatos de un dia antes de intentar parsear su
+  //   adjunto (como hacia una version anterior de este fix), podriamos
+  //   quedarnos para siempre con el correo equivocado de ese dia. Por eso
+  //   aqui usamos keepAllEmailsForLastNDays: nos quedamos con TODOS los
+  //   correos de los "limit" dias mas recientes con correo, y dejamos que
+  //   la deduplicacion posterior por dia (bestByDay, mas abajo, que ya
+  //   prioriza correos con parsed === true) elija dentro de cada dia el
+  //   correo que si se pudo parsear -- igual que ya funcionaba antes de
+  //   este cambio, pero ahora garantizando cobertura de "limit" dias
+  //   reales distintos en vez de un simple corte por numero de correos.
+  const preLimitEmails = ruleSource === 'vdc'
     ? keepFirstEmailPerDayVdc(matchedEmails)
-    : matchedEmails
+    : (ruleSource === 'barracuda' || ruleSource === 'as400')
+      ? keepAllEmailsForLastNDays(matchedEmails, limit)
+      : matchedEmails
 
-  const filtered = preLimitEmails.slice(0, Number(limit) || 200)
+  // Para VDC el recorte por numero de correos sigue siendo equivalente a
+  // recorte por dias (ya hay como mucho 1 correo por dia tras el paso
+  // anterior). Para Barracuda/AS400 ya no hace falta recortar aqui: 
+  // keepAllEmailsForLastNDays ya limito a los "limit" dias mas recientes 
+  // (pudiendo haber mas de un correo por dia), y el recorte final real 
+  // ocurre despues, en dedupedExecutions (maximo 1 resultado por dia).
+  const filtered = ruleSource === 'vdc'
+    ? preLimitEmails.slice(0, Number(limit) || 200)
+    : preLimitEmails
 
   // Procesar en paralelo controlado
   const executions = []
@@ -869,16 +947,19 @@ async function getJobExecutionsFromEmailHistory(cfg, rule, jobName, limit = 200,
     executions.push(...batchResults)
   }
 
-  // Deduplicado por dia de ejecucion real (AS400 en concreto puede recibir mas
-  // de un correo con el mismo asunto/remitente para la misma ejecucion, p.ej. un
-  // segundo correo 'Log Backup RR' cuyo adjunto no trae el patron esperado y no
-  // se puede parsear). Si dos o mas ejecuciones caen en el mismo dia calendario
-  // (segun start, con fallback a end/receivedDateTime), nos quedamos solo con la
-  // que tiene datos realmente parseados (parsed === true); si ninguna se pudo
-  // parsear, nos quedamos con la mas reciente de ese dia para no perder el rastro.
-  // Para VDC este paso ya no deberia encontrar colisiones (el filtrado
-  // "primer correo del dia" ya dejo como maximo 1 ejecucion por dia), pero se
-  // mantiene sin cambios como red de seguridad generica para todas las fuentes.
+  // Deduplicado por dia de ejecucion real: AS400/Barracuda en concreto
+  // pueden recibir mas de un correo con el mismo asunto/remitente para la
+  // misma ejecucion (p.ej. un segundo correo "Log Backup RR" cuyo adjunto
+  // no trae el patron esperado y no se puede parsear -- o, a la inversa,
+  // el PRIMER correo del dia sin el adjunto util, como el caso real "LOG
+  // Backup SD" aportado por Carlos). Si dos o mas ejecuciones caen en el
+  // mismo dia calendario (segun start, con fallback a end/receivedDateTime),
+  // nos quedamos solo con la que tiene datos realmente parseados
+  // (parsed === true); si ninguna se pudo parsear, nos quedamos con la mas
+  // reciente de ese dia para no perder el rastro. Esta es la capa que
+  // ahora hace el trabajo "pesado" de deduplicacion para Barracuda/AS400
+  // (ver keepAllEmailsForLastNDays mas arriba, que ya no descarta
+  // candidatos antes de tiempo).
   const getDayKey = (execution) => {
     const raw = execution?.start || execution?.end || execution?.receivedDateTime
     if (!raw) return null
@@ -920,6 +1001,7 @@ async function getJobExecutionsFromEmailHistory(cfg, rule, jobName, limit = 200,
 
   const dedupedExecutions = [...bestByDay.values()]
     .sort((a, b) => new Date(b.start || b.end || 0).getTime() - new Date(a.start || a.end || 0).getTime())
+    .slice(0, Number(limit) || 200)
 
   return {
     ok: true,
@@ -945,6 +1027,7 @@ module.exports = {
   parseVdcTimestamp,
   computeVdcFixedStart,
   keepFirstEmailPerDayVdc,
+  keepAllEmailsForLastNDays,
   detectRuleSource,
   buildSubjectTokenRegexes,
   subjectMatchesAllTokens,
