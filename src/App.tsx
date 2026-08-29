@@ -911,7 +911,7 @@ export default function App({
     setExecutionsData(null)
 
     try {
-      const res = (await api().getJobExecutions(jobName || "", 200)) as JobExecutionsResponse
+      const res = (await api().getJobExecutions(jobName || "", 30)) as JobExecutionsResponse
 
       if (res?.ok) setExecutionsData(res)
       else setExecutionsError(res?.error ?? "Error al cargar")
