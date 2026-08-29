@@ -744,7 +744,7 @@ async function getJobExecutionsFromEmailHistory(cfg, rule, jobName, limit = 200,
   // Para VDC: nos quedamos solo con el primer correo de cada dia (la
   // ejecucion "oficial" con horario fijo), antes de aplicar el limite, para
   // no perder dias antiguos si un dia reciente concentra varios reintentos.
-  const preLimitEmails = ruleSource === 'vdc'
+  const preLimitEmails = (ruleSource === 'vdc' || ruleSource === 'barracuda' || ruleSource === 'as400')
     ? keepFirstEmailPerDayVdc(matchedEmails)
     : matchedEmails
 
