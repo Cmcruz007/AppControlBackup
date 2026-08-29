@@ -1535,7 +1535,7 @@ app.get('/api/jobs/executions/:jobName', async (req, res) => {
         matchedRule,
         jobName,
         limit,
-        60
+        90
       )
 
       return res.json(data)
