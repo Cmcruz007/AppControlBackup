@@ -415,6 +415,7 @@ function buildVdcUtcDate(monthName, day, year, hh, mi, ss) {
  *
  * FORMATO ANTIGUO (correos recibidos hasta el 18/08/2026), ej.:
  *   '...that finished on Tue Aug 11 2026 23:45:01 UTC has completed with warning.'
+ *   '...that finished on Sun Aug 16 2026 06:37:18 UTC has completed successfully.'
  *   Patron: "on <DiaSemana> <Mes> <dia> <año> <HH:MM:SS> UTC"
  *   (CON dia de la semana, SIN coma, SIN "at").
  *
@@ -472,9 +473,34 @@ function parseVdcTimestamp(clean) {
  * un aviso. Se sustituye por regex con la "s" opcional
  * (warnings?/errors?) y se elimina el fallback de palabra suelta
  * "error"/"warning", que era la causa raiz del falso ERROR.
+ *
+ * FIX 4 (correo del 16/08/2026, confirmado por Carlos): un correo real con
+ * el texto exacto "...that finished on Sun Aug 16 2026 06:37:18 UTC has
+ * completed successfully." seguia mostrando Inicio=Fin en produccion, a
+ * pesar de que el patron "formato antiguo" (ver parseVdcTimestamp) coincide
+ * perfectamente con ese texto en pruebas aisladas. La causa mas probable
+ * NO es el patron de fecha, sino que para ese correo concreto el cuerpo
+ * completo (bodyContent, obtenido via una peticion HTTP adicional a Graph
+ * en getMessageBody) llegara vacio o incompleto por un fallo puntual de
+ * red/API, o por reescritura del mensaje por un gateway de seguridad
+ * (el asunto de ese correo incluye el tag "[Iberlayer: Correo publicitario
+ * detectado]"). Como fallback defensivo, si no se puede extraer la fecha
+ * desde bodyContent, se reintenta contra bodyPreview (que Microsoft Graph
+ * ya entrega en el listado inicial de correos, SIN peticion adicional, y
+ * que en este caso contendria el mismo texto "finished on ... UTC" dentro
+ * de sus primeros ~255 caracteres, ya que aparece muy pronto en el cuerpo).
+ * Esto no sustituye investigar la causa raiz del fallo de bodyContent si
+ * se repite con frecuencia, pero anade resiliencia sin tocar el patron de
+ * fecha (que ya esta confirmado correcto).
  */
 function parseVdcBody(message, bodyContent = '') {
   const clean = String(bodyContent || '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  const cleanPreview = String(message?.bodyPreview || '')
     .replace(/<[^>]+>/g, ' ')
     .replace(/&nbsp;/g, ' ')
     .replace(/\s+/g, ' ')
@@ -502,7 +528,12 @@ function parseVdcBody(message, bodyContent = '') {
   // (getJobExecutionsFromEmailHistory) cae al fallback generico basado en
   // successWord/errorWord de la regla (inferExecutionStatusFromRule).
 
-  const endTime = parseVdcTimestamp(clean)
+  // FIX 4: primero se intenta con el cuerpo completo; si no hay match, se
+  // reintenta con bodyPreview como red de seguridad (ver comentario arriba).
+  let endTime = parseVdcTimestamp(clean)
+  if (!endTime && cleanPreview) {
+    endTime = parseVdcTimestamp(cleanPreview)
+  }
 
   return {
     // Se rellena en getJobExecutionsFromEmailHistory via computeVdcFixedStart.
@@ -941,6 +972,9 @@ async function getJobExecutionsFromEmailHistory(cfg, rule, jobName, limit = 200,
           logContent = bodyContent
           // FIX: antes se llamaba parseVdcBody(m) sin bodyContent, por lo
           // que endTime siempre salia null (ver comentario en parseVdcBody).
+          // FIX 4: parseVdcBody ahora tambien recibe el mensaje completo
+          // para poder usar message.bodyPreview como fallback si
+          // bodyContent no permite extraer la fecha.
           parsed = parseVdcBody(m, bodyContent)
 
           // El correo de VDC solo trae la hora de FIN. El INICIO es fijo
