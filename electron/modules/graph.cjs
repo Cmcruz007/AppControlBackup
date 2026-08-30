@@ -50,49 +50,13 @@ async function getGraphToken(graphCfg) {
 
 // ─── Listado de correos ─────────────────────────────────────────────────────
 
-/**
- * Escapa comillas simples para uso seguro dentro de un literal string OData
- * (p.ej. dentro de contains(from/emailAddress/address,'...')). OData usa
- * '' (doble comilla simple) para escapar una comilla simple literal.
- */
-function escapeODataString(value) {
-  return String(value || '').replace(/'/g, "''")
-}
-
-/**
- * FIX (detectado por Carlos el 30/08/2026): getEmailsInRange traia TODOS
- * los correos del buzon en el rango de fechas (Veeam VM, VDC, Barracuda,
- * AS400, relanzamientos, etc.), sin filtrar por remitente en la propia
- * consulta a Graph. Como el bucle de paginacion corta en cuanto se
- * acumulan 2000 correos (ver "if (all.length >= 2000) break" mas abajo), y
- * Graph devuelve los correos ordenados del mas reciente al mas antiguo
- * ($orderby=receivedDateTime desc), en un buzon con mucho volumen ese tope
- * se alcanzaba mucho antes de llegar a los correos con mas de ~18-20 dias
- * de antiguedad -- aunque se pedian hasta sinceDays=90. Esto explicaba que
- * VDC/Barracuda/AS400 se quedaran cortos de ejecuciones (18-20 en vez de
- * las 30 objetivo) sin que fuera un problema de retencion ni de un limite
- * "hardcodeado" visible.
- *
- * Ahora getEmailsInRange acepta un "senderFilter" opcional que, si se
- * proporciona, se incluye directamente en el $filter de OData enviado a
- * Graph (contains sobre from/emailAddress/address). Asi Graph filtra en
- * origen y el cupo de 2000/pagina se gasta unicamente en correos
- * relevantes para esa regla concreta, permitiendo cubrir muchos mas dias
- * de historial real sin tocar el limite. getJobExecutionsFromEmailHistory
- * ya pasa rule.sender (que conocemos de antemano) a esta funcion.
- */
-async function getEmailsInRange(cfg, inicio, fin, senderFilter = null) {
+async function getEmailsInRange(cfg, inicio, fin) {
   if (!cfg?.graph?.tenantId) throw new Error('Falta configuracion de Microsoft Graph (tenantId).')
 
   const g = cfg.graph
   const token = await getGraphToken(g)
 
-  let filter = `receivedDateTime ge ${inicio.toISOString()} and receivedDateTime lt ${fin.toISOString()}`
-
-  if (senderFilter) {
-    const escaped = escapeODataString(senderFilter)
-    filter += ` and contains(from/emailAddress/address,'${escaped}')`
-  }
+  const filter = `receivedDateTime ge ${inicio.toISOString()} and receivedDateTime lt ${fin.toISOString()}`
 
   const params = new URLSearchParams({
     $filter: filter,
@@ -496,16 +460,18 @@ function parseVdcTimestamp(clean) {
  * mediante computeVdcFixedStart(), ya que ese calculo necesita el nombre
  * del job y la ventana operacional (electron/modules/engine.cjs).
  *
- * FIX 3 (estado incorrecto): el cuerpo real dice "...has completed with
- * warning." (SIN la "s" final), pero el codigo anterior solo comprobaba
- * el string exacto "completed with warnings" (CON "s"). Al no coincidir,
- * el codigo caia en un fallback generico que buscaba la palabra suelta
- * "error" en cualquier parte del texto -- y el propio disclaimer que
- * Veeam incluye en TODOS los correos ("Warning and error messages are
+ * FIX 3 (estado incorrecto -- detectado por Carlos con un correo real del
+ * 12/08/2026): el cuerpo real dice "...has completed with warning." (SIN
+ * la "s" final), pero el codigo anterior solo comprobaba el string exacto
+ * "completed with warnings" (CON "s"), copiado del formato nuevo. Al no
+ * coincidir, el codigo caia en un fallback generico que buscaba la palabra
+ * suelta "error" en cualquier parte del texto -- y el propio disclaimer
+ * que Veeam incluye en TODOS los correos ("Warning and error messages are
  * often informational...") contiene la palabra "error", disparando
  * incorrectamente el estado ERROR incluso en backups correctos con solo
  * un aviso. Se sustituye por regex con la "s" opcional
- * (warnings?/errors?) y se elimina el fallback de palabra suelta.
+ * (warnings?/errors?) y se elimina el fallback de palabra suelta
+ * "error"/"warning", que era la causa raiz del falso ERROR.
  */
 function parseVdcBody(message, bodyContent = '') {
   const clean = String(bodyContent || '')
@@ -586,7 +552,7 @@ function computeVdcFixedStart(jobName, endTime) {
   // Salvaguarda: si el inicio calculado quedara despues del fin real (no
   // deberia pasar con estos offsets salvo que el "end" usado no sea el de
   // la ejecucion original, p.ej. por un correo de relanzamiento del mismo
-  // dia -- ver filtrado "primer correo del dia" en
+  // dia -- ver filtrado "primer correo de la ventana" en
   // getJobExecutionsFromEmailHistory), no lo usamos para evitar
   // duraciones negativas o incoherentes.
   if (start.getTime() >= endTime.getTime()) return null
@@ -595,38 +561,159 @@ function computeVdcFixedStart(jobName, endTime) {
 }
 
 /**
- * Para VDC, Veeam puede enviar MAS DE UN correo de finalizacion el mismo
- * dia para el mismo job (reintentos/relanzamientos internos del propio
- * servicio VDC, no controlados por nosotros). Segun confirma Carlos, solo
- * la PRIMERA ejecucion del dia tiene el horario de inicio FIJO conocido
- * (VDC_FIXED_SCHEDULE); los correos posteriores del mismo dia deben
- * omitirse por completo, no se procesan como ejecuciones independientes.
+ * Devuelve el inicio (18:00 local) de la VENTANA OPERACIONAL a la que
+ * pertenece una fecha dada, como clave ISO string estable para agrupar.
+ * Usamos la ventana operacional (18:00 -> 18:00 del dia siguiente) en vez
+ * del "dia calendario natural" porque varios correos (VDC, Barracuda)
+ * llegan pasada la medianoche y deben seguir contando como parte de la
+ * ventana del dia anterior, no como un dia nuevo.
+ */
+function getWindowKey(date) {
+  const { inicio } = getOperationalWindow(date)
+  return inicio.toISOString()
+}
+
+/**
+ * Para VDC, Barracuda y AS400, el proveedor (Veeam Data Cloud / Barracuda
+ * / el propio AS400) puede enviar MAS DE UN correo dentro de la misma
+ * ventana operacional de 24h (reintentos/relanzamientos internos, no
+ * controlados por nosotros). SOLO la primera ejecucion de la ventana
+ * (el correo recibido mas temprano) es la que consideramos la ejecucion
+ * real a mostrar en el historico; el resto de correos de esa misma
+ * ventana se descartan por completo.
+ *
+ * IMPORTANTE (caso Barracuda, confirmado por Carlos): Barracuda decide
+ * por su cuenta cuando ejecutar el backup dentro del dia -- puede haber
+ * 0, 1, 2 o mas correos en una misma ventana de 24h. Si hay 2 o mas, nos
+ * quedamos solo con el primero (el mas temprano). Si no hay NINGUNO en
+ * una ventana, esa ventana debe aparecer en el historico marcada con "-"
+ * en Inicio/Fin/Duracion en vez de no aparecer (ver
+ * fillMissingBarracudaWindows mas abajo).
  *
  * Esta funcion agrupa los correos ya filtrados por job (mismo remitente +
- * asunto) por dia calendario de recepcion, y para cada dia se queda
- * UNICAMENTE con el correo recibido mas temprano (el primero), descartando
- * el resto. Se aplica ANTES del recorte por "limit" para no perder
- * cobertura de dias antiguos si un dia reciente concentra muchos correos
- * de reintento.
+ * asunto) por VENTANA OPERACIONAL (no por dia calendario natural, ver
+ * getWindowKey), y para cada ventana se queda UNICAMENTE con el correo
+ * recibido mas temprano, descartando el resto. Se aplica ANTES del
+ * recorte por "limit" para no perder cobertura de dias antiguos si un dia
+ * reciente concentra muchos correos de reintento.
  */
-function keepFirstEmailPerDayVdc(emails) {
-  const firstOfDay = new Map()
+function keepFirstEmailPerWindow(emails) {
+  const firstOfWindow = new Map()
 
   for (const m of emails) {
     const received = m?.receivedDateTime ? new Date(m.receivedDateTime) : null
     if (!received || Number.isNaN(received.getTime())) continue
 
-    const dayKey = `${received.getFullYear()}-${pad2(received.getMonth() + 1)}-${pad2(received.getDate())}`
-    const current = firstOfDay.get(dayKey)
+    const key = getWindowKey(received)
+    const current = firstOfWindow.get(key)
 
     if (!current || received.getTime() < new Date(current.receivedDateTime).getTime()) {
-      firstOfDay.set(dayKey, m)
+      firstOfWindow.set(key, m)
     }
   }
 
-  return [...firstOfDay.values()].sort(
+  return [...firstOfWindow.values()].sort(
     (a, b) => new Date(b.receivedDateTime).getTime() - new Date(a.receivedDateTime).getTime()
   )
+}
+
+// Alias retrocompatible: el nombre anterior de esta funcion (usado en
+// versiones previas de este fichero) agrupaba por dia calendario natural.
+// Se mantiene el nombre exportado por si algun otro modulo lo referencia,
+// pero ahora usa agrupacion por ventana operacional (mas correcta).
+const keepFirstEmailPerDayVdc = keepFirstEmailPerWindow
+
+/**
+ * Barracuda ejecuta "cuando lo considera oportuno": puede haber ventanas
+ * de 24h sin ningun correo. Esta funcion construye filas "vacias"
+ * (status: 'missing') para cada ventana operacional de los ultimos
+ * `limit` dias en la que NO exista ya una ejecucion real, para que el
+ * historico muestre "-" en vez de simplemente saltarse esos dias.
+ *
+ * Solo se aplica a Barracuda (ver getJobExecutionsFromEmailHistory), ya
+ * que VDC y AS400 tienen horario fijo/programado y su ausencia total en
+ * una ventana suele significar otra cosa (job no configurado ese dia,
+ * exclusion de fin de semana en AS400 PR/RR, etc.), fuera del alcance de
+ * este fix.
+ */
+function fillMissingBarracudaWindows(executions, limit) {
+  const maxWindows = Math.max(1, Math.min(500, Number(limit) || 30))
+
+  const presentKeys = new Set(
+    executions
+      .map((e) => {
+        const raw = e?.start || e?.end
+        if (!raw) return null
+        const d = new Date(raw)
+        if (Number.isNaN(d.getTime())) return null
+        return getWindowKey(d)
+      })
+      .filter(Boolean)
+  )
+
+  const now = new Date()
+  const missingRows = []
+
+  for (let i = 0; i < maxWindows; i++) {
+    const refDate = new Date(now.getTime() - i * 24 * 60 * 60 * 1000)
+    const { inicio, fin } = getOperationalWindow(refDate)
+    const key = inicio.toISOString()
+
+    if (presentKeys.has(key)) continue
+
+    missingRows.push({
+      id: `missing-${key}`,
+
+      start: null,
+      end: null,
+      duration: null,
+      // Fecha de referencia para la columna FECHA del frontend (usa
+      // x?.start ?? x?.end ?? x?.date ?? x?.receivedDateTime). Usamos el
+      // fin de la ventana (18:00 del dia "N"), que es el mismo dia
+      // calendario en el que caen las ejecuciones reales de Barracuda de
+      // esa ventana.
+      date: fin.toISOString(),
+
+      status: 'missing',
+      result: 'missing',
+      reason: 'Sin ejecución en la ventana operacional (24h)',
+
+      source: 'email',
+      subject: '',
+      bodyPreview: '',
+      hasAttachments: false,
+
+      as400LogContent: null,
+      logContent: null,
+      logText: null,
+      emailLog: null,
+      body: null,
+      bodyContent: null,
+
+      hasLog: false,
+      logAvailable: false,
+      hasEmailLog: false,
+      emailLogAvailable: false,
+      canOpenLog: false,
+      logIcon: false,
+
+      size: null,
+      items: null,
+
+      parserSource: 'barracuda',
+      parsed: false,
+    })
+  }
+
+  const merged = [...executions, ...missingRows]
+
+  merged.sort((a, b) => {
+    const ta = new Date(a?.start || a?.end || a?.date || 0).getTime()
+    const tb = new Date(b?.start || b?.end || b?.date || 0).getTime()
+    return tb - ta
+  })
+
+  return merged.slice(0, maxWindows)
 }
 
 // ─── Status fallback (cuando el parser no devuelve nada) ────────────────────
@@ -713,19 +800,9 @@ async function getJobExecutionsFromEmailHistory(cfg, rule, jobName, limit = 200,
   const fin = new Date()
   const inicio = new Date(fin.getTime() - (Number(sinceDays) || 60) * 24 * 60 * 60 * 1000)
 
-  const senderRule = normalizeText(rule?.sender)
+  const allEmails = await getEmailsInRange(cfg, inicio, fin)
 
-  // FIX (30/08/2026): antes se llamaba a getEmailsInRange(cfg, inicio, fin)
-  // sin filtro de remitente, trayendo TODOS los correos del buzon (Veeam
-  // VM, VDC, Barracuda, AS400, relanzamientos...) para luego filtrar en
-  // memoria. En un buzon con mucho volumen, el tope de paginacion de
-  // getEmailsInRange (2000 correos) se alcanzaba mucho antes de llegar a
-  // los correos con mas antiguedad, dejando VDC/Barracuda/AS400 con menos
-  // dias de historial de los que sinceDays permitiria en teoria. Ahora se
-  // pasa rule.sender directamente a getEmailsInRange para que Microsoft
-  // Graph filtre por remitente EN ORIGEN (via $filter/contains), gastando
-  // el cupo de paginacion solo en correos relevantes para esta regla.
-  const allEmails = await getEmailsInRange(cfg, inicio, fin, rule?.sender || null)
+  const senderRule = normalizeText(rule?.sender)
 
   // Detectamos la fuente ANTES de construir subjectRule para poder usarla.
   const ruleSource = detectRuleSource(rule)
@@ -767,11 +844,6 @@ async function getJobExecutionsFromEmailHistory(cfg, rule, jobName, limit = 200,
       const sender = senderAddr || fromAddr
       const subject = normalizeText(m?.subject)
 
-      // NOTA: aunque ahora Graph ya filtra por remitente en origen (ver
-      // getEmailsInRange), mantenemos esta comprobacion en memoria como
-      // red de seguridad (p.ej. por si "from" y "sender" difieren, casos
-      // de reenvio, o remitentes parecidos que Graph "contains" podria
-      // dejar pasar de mas).
       const senderOk =
         !senderRule ||
         !sender ||
@@ -790,11 +862,22 @@ async function getJobExecutionsFromEmailHistory(cfg, rule, jobName, limit = 200,
     })
     .sort((a, b) => new Date(b.receivedDateTime).getTime() - new Date(a.receivedDateTime).getTime())
 
-  // Para VDC: nos quedamos solo con el primer correo de cada dia (la
-  // ejecucion "oficial" con horario fijo), antes de aplicar el limite, para
-  // no perder dias antiguos si un dia reciente concentra varios reintentos.
-  const preLimitEmails = ruleSource === 'vdc'
-    ? keepFirstEmailPerDayVdc(matchedEmails)
+  // Para VDC, Barracuda y AS400: nos quedamos solo con el primer correo de
+  // cada VENTANA OPERACIONAL de 24h (la ejecucion real; el resto de
+  // correos de esa misma ventana son reintentos/relanzamientos que se
+  // descartan), antes de aplicar el limite, para no perder cobertura de
+  // ventanas antiguas si una ventana reciente concentra varios reintentos.
+  //
+  // FIX (Barracuda, confirmado por Carlos): antes esta deduplicacion solo
+  // se aplicaba a VDC y agrupaba por "dia calendario natural" en vez de
+  // por ventana operacional. Para Barracuda, cuyo horario de ejecucion es
+  // variable (decide "cuando lo considera oportuno"), agrupar por dia
+  // calendario natural podia mezclar correos de ventanas distintas cuando
+  // la ejecucion o el correo llegaban pasada la medianoche, provocando
+  // duraciones incoherentes (p.ej. Inicio de un dia + Fin de la
+  // madrugada del dia siguiente atribuido erroneamente al mismo dia).
+  const preLimitEmails = (ruleSource === 'vdc' || ruleSource === 'barracuda' || ruleSource === 'as400')
+    ? keepFirstEmailPerWindow(matchedEmails)
     : matchedEmails
 
   const filtered = preLimitEmails.slice(0, Number(limit) || 200)
@@ -837,9 +920,10 @@ async function getJobExecutionsFromEmailHistory(cfg, rule, jobName, limit = 200,
           // El correo de VDC solo trae la hora de FIN. El INICIO es fijo
           // por tipo de backup (ver VDC_FIXED_SCHEDULE / computeVdcFixedStart
           // mas arriba), confirmado contra el portal de Veeam Data Cloud.
-          // Gracias al filtrado "primer correo del dia" (keepFirstEmailPerDayVdc)
-          // este endTime siempre corresponde a la ejecucion original, por lo
-          // que el calculo del inicio fijo debe ser coherente.
+          // Gracias al filtrado "primer correo de la ventana"
+          // (keepFirstEmailPerWindow) este endTime siempre corresponde a
+          // la ejecucion original, por lo que el calculo del inicio fijo
+          // debe ser coherente.
           if (parsed?.endTime) {
             const endDate = new Date(parsed.endTime)
             const fixedStart = computeVdcFixedStart(jobName, endDate)
@@ -925,9 +1009,9 @@ async function getJobExecutionsFromEmailHistory(cfg, rule, jobName, limit = 200,
   // (segun start, con fallback a end/receivedDateTime), nos quedamos solo con la
   // que tiene datos realmente parseados (parsed === true); si ninguna se pudo
   // parsear, nos quedamos con la mas reciente de ese dia para no perder el rastro.
-  // Para VDC este paso ya no deberia encontrar colisiones (el filtrado
-  // "primer correo del dia" ya dejo como maximo 1 ejecucion por dia), pero se
-  // mantiene sin cambios como red de seguridad generica para todas las fuentes.
+  // Para VDC/Barracuda/AS400 este paso ya no deberia encontrar colisiones (el
+  // filtrado "primer correo de la ventana" ya dejo como maximo 1 ejecucion por
+  // ventana), pero se mantiene sin cambios como red de seguridad generica.
   const getDayKey = (execution) => {
     const raw = execution?.start || execution?.end || execution?.receivedDateTime
     if (!raw) return null
@@ -967,8 +1051,18 @@ async function getJobExecutionsFromEmailHistory(cfg, rule, jobName, limit = 200,
     // Si current ya esta parseado y execution no, se ignora execution (se descarta el fantasma).
   }
 
-  const dedupedExecutions = [...bestByDay.values()]
+  let dedupedExecutions = [...bestByDay.values()]
     .sort((a, b) => new Date(b.start || b.end || 0).getTime() - new Date(a.start || a.end || 0).getTime())
+
+  // FIX (Barracuda, confirmado por Carlos): Barracuda ejecuta "cuando lo
+  // considera oportuno" y puede haber ventanas de 24h sin NINGUN correo.
+  // Rellenamos esas ventanas vacias con filas "missing" (status: 'missing')
+  // para que el historico muestre "-" en Inicio/Fin/Duracion en lugar de
+  // saltarse el dia sin mas. Solo aplica a Barracuda (ver comentario en
+  // fillMissingBarracudaWindows).
+  if (ruleSource === 'barracuda') {
+    dedupedExecutions = fillMissingBarracudaWindows(dedupedExecutions, limit)
+  }
 
   return {
     ok: true,
@@ -993,7 +1087,9 @@ module.exports = {
   parseVdcBody,
   parseVdcTimestamp,
   computeVdcFixedStart,
+  keepFirstEmailPerWindow,
   keepFirstEmailPerDayVdc,
+  fillMissingBarracudaWindows,
   detectRuleSource,
   buildSubjectTokenRegexes,
   subjectMatchesAllTokens,

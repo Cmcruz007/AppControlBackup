@@ -183,6 +183,12 @@ export default function ExecutionsTab({
     if (s === "failed") return "ERROR"
     if (s === "running") return "RUNNING"
     if (s === "pending") return "PENDING"
+    // FIX: nuevo estado 'missing' para ventanas operacionales de Barracuda
+    // sin ningun correo recibido (ver fillMissingBarracudaWindows en
+    // electron/modules/graph.cjs). Reutiliza el estilo .badge.missing ya
+    // existente en styles.css (color morado, coherente con "Sin ejecución"
+    // usado en el resto de la app para jobs NO-RUN).
+    if (s === "missing") return "SIN EJECUCIÓN"
     return String(status || "—").toUpperCase()
   }
   // ─────────────────────────────────────────────────────────────
@@ -432,6 +438,14 @@ export default function ExecutionsTab({
           </thead>
           <tbody>
             {executions.map((x: any, idx: number) => {
+              // FIX: filas "missing" (ventana operacional de Barracuda sin
+              // ningun correo recibido, ver fillMissingBarracudaWindows en
+              // electron/modules/graph.cjs). x.start y x.end vienen null a
+              // proposito; NO deben caer en el fallback "x?.start ?? dateValue"
+              // (que mostraria la hora de fin de ventana, 18:00, como si
+              // fuera un Inicio real). Se muestran explicitamente como "—".
+              const isMissing = String(x?.status ?? "").toLowerCase() === "missing"
+
               const dateValue = x?.start ?? x?.end ?? x?.date ?? x?.receivedDateTime
               const status = String(x?.status ?? "pending").toLowerCase()
               const durationValue =
@@ -439,9 +453,9 @@ export default function ExecutionsTab({
               return (
                 <tr key={x?.id ?? `${jobName}-${idx}`} className={`compact-row row-${status}`}>
                   <td>{formatDate(dateValue)}</td>
-                  <td className="tabular">{formatTime(x?.start ?? dateValue)}</td>
-                  <td className="tabular">{formatTime(x?.end)}</td>
-                  <td className="tabular">{formatDuration(durationValue)}</td>
+                  <td className="tabular">{isMissing ? "—" : formatTime(x?.start ?? dateValue)}</td>
+                  <td className="tabular">{isMissing ? "—" : formatTime(x?.end)}</td>
+                  <td className="tabular">{isMissing ? "—" : formatDuration(durationValue)}</td>
                   <td style={{ textAlign: "right" }}>
                     <span className={`badge ${status}`}>
                       {statusLabel(status)}
