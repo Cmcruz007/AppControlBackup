@@ -656,37 +656,28 @@ const keepFirstEmailPerDayVdc = keepFirstEmailPerWindow
 
 /**
  * VDC, Barracuda y AS400 pueden tener ventanas operacionales de 24h sin
- * NINGUN correo (VDC/AS400 por caida puntual del backup o del correo;
- * Barracuda ademas porque "ejecuta cuando lo considera oportuno" y puede
- * saltarse dias enteros). Esta funcion construye filas "vacias"
+ * NINGUN correo. Esta funcion construye filas "vacias"
  * (status: 'missing') para cada ventana operacional de las ultimas
- * `limit` ventanas en la que NO exista ya una ejecucion real, para que el
- * historico muestre siempre las ultimas `limit` ventanas (objetivo:
- * listar las ultimas 30 ejecuciones/ventanas para VDC, Barracuda y AS400),
- * marcando con "-" las que no tuvieron ejecucion en vez de simplemente
- * saltarselas.
+ * `limit` ventanas en la que NO exista ya una ejecucion real.
  *
- * FIX critico de calculo de ventanas (detectado por Carlos: aparecia una
- * fila duplicada para el mismo dia, una real y otra "SIN EJECUCION"): la
- * version anterior generaba las ventanas candidatas restando dias enteros
- * desde "ahora" (new Date(now - i*24h)) y volviendo a pasar ese resultado
- * por getOperationalWindow(). Como getOperationalWindow() decide si debe
- * retroceder un dia comparando la HORA de la fecha recibida contra las
- * 18:00, y esa hora heredada de "ahora" no tiene por que coincidir con la
- * hora real en la que se ejecuto cada backup, el desplazamiento de dia
- * podia no coincidir entre la ventana candidata (calculada con la hora
- * actual) y la ventana real de una ejecucion que ocurrio de madrugada,
- * produciendo duplicados o huecos en el limite.
+ * La clave interna siempre es el inicio de la ventana operacional.
  *
- * Fix: se ancla el calculo a las 18:00:00 EXACTAS de la ventana que
- * contiene "ahora" (getOperationalWindow(now).inicio, que SIEMPRE tiene
- * hora fija 18:00:00) y se retrocede restando multiplos exactos de 24h
- * sobre esa hora fija. Así la clave de cada ventana candidata coincide
- * siempre, sin ambiguedad, con la clave real de cualquier ejecucion que
- * caiga dentro de esa ventana (ver getWindowKey), sin importar a que hora
- * del dia se consulte esta funcion.
+ * FECHA MOSTRADA:
+ *   - AS400: se utiliza windowStart porque el backup pertenece al dia
+ *     calendario en el que arranca, normalmente a las 22:40/22:50.
+ *     Si una ventana de sabado no tiene ejecucion, debe mostrarse el
+ *     sabado como SIN EJECUCION, no el domingo.
+ *
+ *   - VDC/Barracuda: se mantiene windowEnd para conservar el criterio
+ *     actual, ya que sus ejecuciones pueden producirse de madrugada o
+ *     dentro del dia calendario correspondiente al final de la ventana.
+ *
+ * Esto corrige en AS400:
+ *   - La ausencia de los sabados 08/08, 15/08, 22/08 y 29/08.
+ *   - Las fechas duplicadas con una ejecucion real y otra SIN EJECUCION.
+ *   - El desplazamiento de las filas vacias al dia siguiente.
  */
-function fillMissingWindows(executions, limit) {
+function fillMissingWindows(executions, limit, ruleSource = 'unknown') {
   const maxWindows = Math.max(1, Math.min(500, Number(limit) || 30))
 
   const presentKeys = new Set(
@@ -694,25 +685,39 @@ function fillMissingWindows(executions, limit) {
       .map((e) => {
         const raw = e?.start || e?.end
         if (!raw) return null
+
         const d = new Date(raw)
         if (Number.isNaN(d.getTime())) return null
+
         return getWindowKey(d)
       })
       .filter(Boolean)
   )
 
-  // Ancla fija: inicio (18:00:00 exactas) de la ventana operacional que
-  // contiene el instante actual. A partir de aqui, cada ventana anterior
-  // esta EXACTAMENTE 24h antes, sin arrastrar la hora variable de "ahora".
+  // Inicio exacto de la ventana operacional que contiene el instante
+  // actual. Cada ventana anterior se obtiene restando bloques de 24 horas.
   const anchorStart = getOperationalWindow(new Date()).inicio
   const missingRows = []
 
   for (let i = 0; i < maxWindows; i++) {
-    const windowStart = new Date(anchorStart.getTime() - i * 24 * 60 * 60 * 1000)
-    const windowEnd = new Date(windowStart.getTime() + 24 * 60 * 60 * 1000)
+    const windowStart = new Date(
+      anchorStart.getTime() - i * 24 * 60 * 60 * 1000
+    )
+
+    const windowEnd = new Date(
+      windowStart.getTime() + 24 * 60 * 60 * 1000
+    )
+
     const key = windowStart.toISOString()
 
     if (presentKeys.has(key)) continue
+
+    // AS400 pertenece al dia en el que comienza la ventana.
+    // VDC y Barracuda mantienen el criterio existente basado en el final
+    // de la ventana operacional.
+    const displayDate = ruleSource === 'as400'
+      ? windowStart
+      : windowEnd
 
     missingRows.push({
       id: `missing-${key}`,
@@ -720,12 +725,7 @@ function fillMissingWindows(executions, limit) {
       start: null,
       end: null,
       duration: null,
-      // Fecha de referencia para la columna FECHA del frontend (usa
-      // x?.start ?? x?.end ?? x?.date ?? x?.receivedDateTime). Usamos el
-      // fin de la ventana (18:00 del dia "N+1"), que es el mismo dia
-      // calendario en el que suelen caer las ejecuciones reales de esa
-      // ventana para estas fuentes.
-      date: windowEnd.toISOString(),
+      date: displayDate.toISOString(),
 
       status: 'missing',
       result: 'missing',
@@ -753,7 +753,7 @@ function fillMissingWindows(executions, limit) {
       size: null,
       items: null,
 
-      parserSource: null,
+      parserSource: ruleSource,
       parsed: false,
     })
   }
@@ -761,15 +761,19 @@ function fillMissingWindows(executions, limit) {
   const merged = [...executions, ...missingRows]
 
   merged.sort((a, b) => {
-    const ta = new Date(a?.start || a?.end || a?.date || 0).getTime()
-    const tb = new Date(b?.start || b?.end || b?.date || 0).getTime()
+    const ta = new Date(
+      a?.start || a?.end || a?.date || 0
+    ).getTime()
+
+    const tb = new Date(
+      b?.start || b?.end || b?.date || 0
+    ).getTime()
+
     return tb - ta
   })
 
   return merged.slice(0, maxWindows)
-}
-
-// Alias retrocompatible (nombre anterior, cuando solo se aplicaba a
+}// Alias retrocompatible (nombre anterior, cuando solo se aplicaba a
 // Barracuda). Se mantiene por si algun otro modulo lo referencia.
 const fillMissingBarracudaWindows = fillMissingWindows
 
@@ -1122,9 +1126,13 @@ async function getJobExecutionsFromEmailHistory(cfg, rule, jobName, limit = 200,
   // que no tuvieron ejecucion en vez de mostrar menos filas de las
   // pedidas. Ver fillMissingWindows para el detalle del fix de calculo de
   // ventanas (evita duplicados por desajuste de hora).
-  if (ruleSource === 'vdc' || ruleSource === 'barracuda' || ruleSource === 'as400') {
-    dedupedExecutions = fillMissingWindows(dedupedExecutions, limit)
-  }
+ if (ruleSource === 'vdc' || ruleSource === 'barracuda' || ruleSource === 'as400') {
+  dedupedExecutions = fillMissingWindows(
+    dedupedExecutions,
+    limit,
+    ruleSource
+  )
+}
 
   return {
     ok: true,
