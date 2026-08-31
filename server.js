@@ -66,6 +66,14 @@ const HTTP_REDIRECT_PORT = Number(process.env.BM_HTTP_PORT) || 80
 const pfxPath = process.env.BM_PFX_PATH || path.join(__dirname, 'Certificado', 'DASHBOARD.pfx')
 const pfxPassword = process.env.BM_PFX_PASSWORD || ''
 
+// ─── Profundidad del historial de ejecuciones (modal de Backups) ────────────
+// Jobs alimentados por correo (VDC / Barracuda / AS400): ventana de 30 ejecuciones.
+// Jobs de VB&R (Veeam Backup & Replication, origen SQL): ventana de 90 ejecuciones.
+const HISTORY_LIMIT_EMAIL_JOBS = Number(process.env.BM_HISTORY_LIMIT_EMAIL) || 30
+const HISTORY_LIMIT_VBR_JOBS = Number(process.env.BM_HISTORY_LIMIT_VBR) || 90
+// Días de correo hacia atrás que se rastrean para reconstruir las 30 ejecuciones.
+const HISTORY_EMAIL_LOOKBACK_DAYS = Number(process.env.BM_HISTORY_EMAIL_DAYS) || 90
+
 if (!AUTH_TOKEN) {
   console.warn('⚠️  BM_AUTH_TOKEN no definido. La API NO tiene autenticacion por token clásico.')
   console.warn('   En producción debe existir BM_AUTH_TOKEN o validación Entra ID activa.')
@@ -1513,7 +1521,6 @@ app.get('/api/jobs/executions/:jobName', async (req, res) => {
 
   try {
     const jobName = decodeURIComponent(req.params.jobName).trim()
-    const limit = Number(req.query.limit) || 200
 
     const allRules = [
       ...(Array.isArray(cfg?.veeamDataCloudRules) ? cfg.veeamDataCloudRules : []),
@@ -1529,13 +1536,30 @@ app.get('/api/jobs/executions/:jobName', async (req, res) => {
       return target === title || target === name
     })
 
+    // El límite lo decide el servidor según el origen del job.
+    // Si el frontend envía ?limit=, solo se respeta si es MENOR que el tope
+    // del tipo de job; nunca puede ampliarlo ni recortar VB&R a 30.
+    const requestedLimit = Number(req.query.limit)
+    const resolveLimit = (maxLimit) => {
+      if (Number.isFinite(requestedLimit) && requestedLimit > 0 && requestedLimit < maxLimit) {
+        return Math.floor(requestedLimit)
+      }
+      return maxLimit
+    }
+
     if (matchedRule) {
+      // VDC / Barracuda / AS400 → 30 ejecuciones (ventana móvil, con relleno
+      // "SIN EJECUCIÓN" en los días sin correo).
+      const emailLimit = resolveLimit(HISTORY_LIMIT_EMAIL_JOBS)
+
+      console.log('[HISTORIAL] job=', jobName, '| origen=email | limit=', emailLimit)
+
       const data = await getJobExecutionsFromEmailHistory(
         cfg,
         matchedRule,
         jobName,
-        limit,
-        90
+        emailLimit,
+        HISTORY_EMAIL_LOOKBACK_DAYS
       )
 
       return res.json(data)
@@ -1549,7 +1573,12 @@ app.get('/api/jobs/executions/:jobName', async (req, res) => {
       })
     }
 
-    const data = await sqlGetJobExecutions(cfg.sql, jobName, limit)
+    // VB&R (origen SQL) → 90 ejecuciones.
+    const vbrLimit = resolveLimit(HISTORY_LIMIT_VBR_JOBS)
+
+    console.log('[HISTORIAL] job=', jobName, '| origen=vbr/sql | limit=', vbrLimit)
+
+    const data = await sqlGetJobExecutions(cfg.sql, jobName, vbrLimit)
     res.json(data)
   } catch (e) {
     res.json({
