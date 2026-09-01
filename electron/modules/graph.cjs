@@ -654,6 +654,57 @@ function keepFirstEmailPerWindow(emails) {
 // pero ahora usa agrupacion por ventana operacional (mas correcta).
 const keepFirstEmailPerDayVdc = keepFirstEmailPerWindow
 
+
+/**
+ * AS400: selecciona la mejor ejecucion de cada ventana DESPUES de analizar
+ * todos los adjuntos candidatos. La ventana se obtiene del inicio real
+ * extraido del log, no de receivedDateTime.
+ *
+ * Los correos cuyo adjunto no se puede parsear no ocupan una ventana y, por
+ * tanto, no pueden desplazar un backup real ni impedir que fillMissingWindows
+ * genere correctamente la fila SIN EJECUCION.
+ */
+function keepBestAs400ExecutionPerWindow(executions) {
+  const bestOfWindow = new Map()
+
+  const quality = (execution) => {
+    let score = 0
+    if (execution?.parsed) score += 100
+    if (execution?.start) score += 20
+    if (execution?.end) score += 20
+    if (execution?.duration != null) score += 10
+    if (execution?.hasLog) score += 5
+    return score
+  }
+
+  for (const execution of executions) {
+    // Para AS400 solo aceptamos como ejecucion real un adjunto parseado.
+    // `start` contiene entonces la fecha/hora real de arranque del trabajo.
+    if (!execution?.parsed || !execution?.start) continue
+
+    const start = new Date(execution.start)
+    if (Number.isNaN(start.getTime())) continue
+
+    const key = getWindowKey(start)
+    const current = bestOfWindow.get(key)
+
+    if (!current || quality(execution) > quality(current)) {
+      bestOfWindow.set(key, execution)
+      continue
+    }
+
+    if (quality(execution) === quality(current)) {
+      const currentTime = new Date(current.start || current.end || 0).getTime()
+      const executionTime = new Date(execution.start || execution.end || 0).getTime()
+      if (executionTime > currentTime) bestOfWindow.set(key, execution)
+    }
+  }
+
+  return [...bestOfWindow.values()].sort(
+    (a, b) => new Date(b.start || b.end || 0).getTime() - new Date(a.start || a.end || 0).getTime()
+  )
+}
+
 /**
  * VDC, Barracuda y AS400 pueden tener ventanas operacionales de 24h sin
  * NINGUN correo. Esta funcion construye filas "vacias"
@@ -937,11 +988,18 @@ async function getJobExecutionsFromEmailHistory(cfg, rule, jobName, limit = 200,
   // la ejecucion o el correo llegaban pasada la medianoche, provocando
   // duraciones incoherentes (p.ej. Inicio de un dia + Fin de la
   // madrugada del dia siguiente atribuido erroneamente al mismo dia).
-  const preLimitEmails = (ruleSource === 'vdc' || ruleSource === 'barracuda' || ruleSource === 'as400')
+  // VDC y Barracuda conservan el primer correo de cada ventana antes del
+  // parseo. AS400 debe conservar TODOS los candidatos hasta analizar sus
+  // adjuntos, porque el primer correo puede no contener el log parseable.
+  const preLimitEmails = (ruleSource === 'vdc' || ruleSource === 'barracuda')
     ? keepFirstEmailPerWindow(matchedEmails)
     : matchedEmails
 
-  const filtered = preLimitEmails.slice(0, Number(limit) || 200)
+  // En AS400, `limit` es el numero final de ventanas del historial, no el
+  // numero de correos candidatos. El recorte se aplica despues del parseo.
+  const filtered = ruleSource === 'as400'
+    ? preLimitEmails
+    : preLimitEmails.slice(0, Number(limit) || 200)
 
   // Procesar en paralelo controlado
   const executions = []
@@ -1115,8 +1173,12 @@ async function getJobExecutionsFromEmailHistory(cfg, rule, jobName, limit = 200,
     // Si current ya esta parseado y execution no, se ignora execution (se descarta el fantasma).
   }
 
-  let dedupedExecutions = [...bestByDay.values()]
-    .sort((a, b) => new Date(b.start || b.end || 0).getTime() - new Date(a.start || a.end || 0).getTime())
+  // AS400 se deduplica por ventana operacional usando el inicio real del
+  // adjunto ya parseado. El resto mantiene la deduplicacion existente.
+  let dedupedExecutions = ruleSource === 'as400'
+    ? keepBestAs400ExecutionPerWindow(executions)
+    : [...bestByDay.values()]
+      .sort((a, b) => new Date(b.start || b.end || 0).getTime() - new Date(a.start || a.end || 0).getTime())
 
   // FIX (confirmado por Carlos, objetivo: 30 ultimas ejecuciones para VDC,
   // Barracuda y AS400): VDC/Barracuda/AS400 pueden tener ventanas
@@ -1159,6 +1221,7 @@ module.exports = {
   computeVdcFixedStart,
   keepFirstEmailPerWindow,
   keepFirstEmailPerDayVdc,
+  keepBestAs400ExecutionPerWindow,
   fillMissingWindows,
   fillMissingBarracudaWindows,
   detectRuleSource,
