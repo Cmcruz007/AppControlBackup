@@ -664,6 +664,58 @@ const keepFirstEmailPerDayVdc = keepFirstEmailPerWindow
  * tanto, no pueden desplazar un backup real ni impedir que fillMissingWindows
  * genere correctamente la fila SIN EJECUCION.
  */
+/**
+ * Deduplicado defensivo por ventana operacional DESPUES del parseo.
+ *
+ * VDC y Barracuda ya llegan normalmente con un unico correo por ventana
+ * gracias a keepFirstEmailPerWindow(). Aun asi, esta segunda barrera evita
+ * que una colision pueda reaparecer durante el parseo o por datos incompletos.
+ *
+ * IMPORTANTE: no se agrupa por dia calendario. Dos ventanas operacionales
+ * distintas pueden contener marcas de tiempo del mismo dia natural y no deben
+ * eliminarse entre si. Esta era una causa posible de filas reales sustituidas
+ * por SIN EJECUCION en la primera carga del historico.
+ */
+function keepBestExecutionPerWindow(executions) {
+  const bestOfWindow = new Map()
+
+  const quality = (execution) => {
+    let score = 0
+    if (execution?.parsed) score += 100
+    if (execution?.start) score += 20
+    if (execution?.end) score += 20
+    if (execution?.duration != null) score += 10
+    if (execution?.hasLog) score += 5
+    return score
+  }
+
+  for (const execution of executions) {
+    const raw = execution?.start || execution?.end || execution?.date
+    if (!raw) continue
+
+    const date = new Date(raw)
+    if (Number.isNaN(date.getTime())) continue
+
+    const key = getWindowKey(date)
+    const current = bestOfWindow.get(key)
+
+    if (!current || quality(execution) > quality(current)) {
+      bestOfWindow.set(key, execution)
+      continue
+    }
+
+    if (quality(execution) === quality(current)) {
+      const currentTime = new Date(current?.start || current?.end || current?.date || 0).getTime()
+      const executionTime = new Date(execution?.start || execution?.end || execution?.date || 0).getTime()
+      if (executionTime < currentTime) bestOfWindow.set(key, execution)
+    }
+  }
+
+  return [...bestOfWindow.values()].sort(
+    (a, b) => new Date(b.start || b.end || b.date || 0).getTime() - new Date(a.start || a.end || a.date || 0).getTime()
+  )
+}
+
 function keepBestAs400ExecutionPerWindow(executions) {
   const bestOfWindow = new Map()
 
@@ -1173,12 +1225,20 @@ async function getJobExecutionsFromEmailHistory(cfg, rule, jobName, limit = 200,
     // Si current ya esta parseado y execution no, se ignora execution (se descarta el fantasma).
   }
 
-  // AS400 se deduplica por ventana operacional usando el inicio real del
-  // adjunto ya parseado. El resto mantiene la deduplicacion existente.
-  let dedupedExecutions = ruleSource === 'as400'
-    ? keepBestAs400ExecutionPerWindow(executions)
-    : [...bestByDay.values()]
+  // VDC, Barracuda y AS400 se deduplican por VENTANA OPERACIONAL.
+  // No usamos bestByDay para estas fuentes: el dia calendario puede mezclar
+  // dos ventanas distintas y eliminar una ejecucion valida antes de rellenar
+  // los huecos. Para fuentes desconocidas se conserva el comportamiento
+  // historico por dia calendario.
+  let dedupedExecutions
+  if (ruleSource === 'as400') {
+    dedupedExecutions = keepBestAs400ExecutionPerWindow(executions)
+  } else if (ruleSource === 'vdc' || ruleSource === 'barracuda') {
+    dedupedExecutions = keepBestExecutionPerWindow(executions)
+  } else {
+    dedupedExecutions = [...bestByDay.values()]
       .sort((a, b) => new Date(b.start || b.end || 0).getTime() - new Date(a.start || a.end || 0).getTime())
+  }
 
   // FIX (confirmado por Carlos, objetivo: 30 ultimas ejecuciones para VDC,
   // Barracuda y AS400): VDC/Barracuda/AS400 pueden tener ventanas
@@ -1188,13 +1248,13 @@ async function getJobExecutionsFromEmailHistory(cfg, rule, jobName, limit = 200,
   // que no tuvieron ejecucion en vez de mostrar menos filas de las
   // pedidas. Ver fillMissingWindows para el detalle del fix de calculo de
   // ventanas (evita duplicados por desajuste de hora).
- if (ruleSource === 'vdc' || ruleSource === 'barracuda' || ruleSource === 'as400') {
-  dedupedExecutions = fillMissingWindows(
-    dedupedExecutions,
-    limit,
-    ruleSource
-  )
-}
+  if (ruleSource === 'vdc' || ruleSource === 'barracuda' || ruleSource === 'as400') {
+    dedupedExecutions = fillMissingWindows(
+      dedupedExecutions,
+      limit,
+      ruleSource
+    )
+  }
 
   return {
     ok: true,
@@ -1221,6 +1281,7 @@ module.exports = {
   computeVdcFixedStart,
   keepFirstEmailPerWindow,
   keepFirstEmailPerDayVdc,
+  keepBestExecutionPerWindow,
   keepBestAs400ExecutionPerWindow,
   fillMissingWindows,
   fillMissingBarracudaWindows,
