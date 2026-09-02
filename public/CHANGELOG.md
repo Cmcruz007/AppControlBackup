@@ -1,5 +1,38 @@
 ### Changelog
 
+## [14.0.0] - 2026-09-02
+
+### 🚀 VERSIÓN MAYOR
+
+- Consolidado el nuevo criterio de profundidad del Historial de Ejecuciones según el origen del backup.
+- Los históricos alimentados mediante correo, correspondientes a VDC, Barracuda y AS400, muestran una ventana móvil de 30 fechas.
+- Los jobs de Veeam Backup & Replication mantienen una profundidad independiente de 90 ejecuciones.
+
+### 🐛 CORREGIDO
+
+- Corregida la primera visualización incompleta del historial de determinados backups alimentados mediante correo.
+- En algunos jobs AS400, y potencialmente también en VDC y Barracuda, determinadas ejecuciones reales podían aparecer inicialmente como SIN EJECUCIÓN y mostrarse correctamente solo después de actualizar la página o pulsar F5.
+- La construcción del historial espera ahora a completar el procesamiento y la deduplicación de las ejecuciones antes de generar las filas SIN EJECUCIÓN.
+- Corregida la deduplicación de ejecuciones por ventana operacional para evitar que una ejecución real quede desplazada o sustituida por una fila sintética durante la primera apertura del historial.
+- Validada en producción la primera apertura de Backup AS400 RR, incluyendo correctamente las ejecuciones del 26/08/2026 y del 14/08/2026 sin necesidad de actualizar.
+- Validada también la primera apertura de históricos VDC y Barracuda con 30 fechas.
+- Confirmado que el cambio no afecta a los históricos de Veeam Backup & Replication, que continúan mostrando 90 ejecuciones.
+
+### 🔧 INTERNO
+
+- Actualizada la lógica de `electron/modules/graph.cjs` para deduplicar las ejecuciones de correo por ventana operacional antes de construir el histórico definitivo.
+- Se mantiene la asignación de las ejecuciones AS400 a su fecha operativa correcta cuando comienzan antes de medianoche y terminan durante la madrugada del día siguiente.
+- Se conserva una única ejecución representativa por fecha o ventana operacional antes de ordenar, rellenar los días sin ejecución y limitar el resultado.
+- Cambio principal incorporado en el commit `4b936bc`.
+
+### ✅ VALIDADO
+
+- AS400: 30 fechas y primera visualización correcta.
+- VDC: 30 fechas y primera visualización correcta.
+- Barracuda: 30 fechas y primera visualización correcta.
+- Veeam Backup & Replication: 90 ejecuciones, sin regresiones.
+- Los días sin ejecución de Barracuda Exchange se mantienen como datos potencialmente válidos, debido a que este backup puede no ejecutarse en determinadas ventanas de 24 horas.
+
 ## [13.0.0] - 2026-08-29
 
 ### AÑADIDO
