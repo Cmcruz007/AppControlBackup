@@ -1,3 +1,4 @@
+
 import { useCallback, useEffect, useMemo, useState } from "react"
 import * as XLSX from "xlsx-js-style"
 import type { AppConfig, JobRowUi, SortKey, SortDir, ManualOverride, CategoryFilter, HistoryPayload } from "../types/ui"
@@ -37,19 +38,19 @@ function getHistoryLogTitle(jobName: string): string {
   return clean
 }
 
+// Paleta unificada con App.tsx (getAs400LogColor), para que el color del
+// modal de log sea IDÉNTICO en Dashboard e Histórico. Solo AS400 lleva
+// color propio por tipo de job; VDC y Barracuda usan el mismo gris claro
+// neutro que ya se usaba en el Dashboard (antes el Histórico usaba verde
+// por defecto, lo que generaba la inconsistencia visual detectada).
 function getHistoryLogColor(jobName: string): string {
-  const normalized = String(jobName || "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .toUpperCase()
-
-  if (/SDB\s*[\/\-]?\s*TGT/.test(normalized)) return "#38bdf8"
-  if (/\bAS400\s+PR\b/.test(normalized) || /\bBACKUP\s+PR\b/.test(normalized)) return "#ff4d4f"
-  if (/\bAS400\s+RR\b/.test(normalized) || /\bBACKUP\s+RR\b/.test(normalized)) return "#ffd400"
-  if (/\bAS400\s+SD\b/.test(normalized) || /\bBACKUP\s+SD\b/.test(normalized)) return "#00ff00"
-  return "#00ff00"
+  const name = String(jobName || "").toLowerCase()
+  // Comprobamos SDB/TGT primero porque "sdb" contiene "sd" como substring.
+  if (name.includes("sdb") || name.includes("tgt")) return "#7890F0"
+  if (name.includes("as400 pr") || name.includes("backup pr")) return "#F01818"
+  if (name.includes("as400 rr") || name.includes("backup rr")) return "#A0A000"
+  if (name.includes("as400 sd") || name.includes("backup sd")) return "#00FF00"
+  return "#E5E7EB"
 }
 
 async function handleExportScheduleExcel() {
@@ -60,7 +61,6 @@ async function handleExportScheduleExcel() {
     alert(`Error getSchedule30: ${String(e)}`)
   }
 }
-
 export default function HistoryTab({
   onWindowChange, config, onManualOverrideSaved, onOpenExecutions, activeCategory,
 }: {
@@ -87,14 +87,12 @@ export default function HistoryTab({
   const [editingJobId, setEditingJobId] = useState<string | null>(null)
   const [emailModal, setEmailModal] = useState(false)
   const [logModalData, setLogModalData] = useState<{ jobName: string; title: string; content: string | null; color: string } | null>(null)
-
   useEffect(() => {
     setLoadingDays(true)
     api().getHistoryDays()
       .then((res: any) => { setLoadingDays(false); if (res?.ok) setAvailableDays(res.days ?? []); else setDaysError(res?.error ?? "Error al cargar días") })
       .catch((e: any) => { setLoadingDays(false); setDaysError(e?.message ?? String(e)) })
   }, [])
-
   const loadDay = useCallback(async (dateStr: string) => {
     setSelectedDay(dateStr); setLoadingDay(true); setDayError(null)
     setHistFull([]); setHistRows([]); setHistWindow(null); onWindowChange(null, null)
@@ -111,10 +109,8 @@ export default function HistoryTab({
       } else { setDayError((res as any)?.error ?? "Error al cargar el día") }
     } catch (e: any) { setLoadingDay(false); setDayError(e?.message ?? String(e)) }
   }, [onWindowChange])
-
   const kpis = useMemo(() => buildKpis(histFull), [histFull])
   const { day, range } = getWindowParts(histWindow?.start ?? null, histWindow?.end ?? null)
-
   const filtered = useMemo(() => {
     let source = showAll ? histFull : histRows
     const base = source.filter((r) => {
@@ -142,23 +138,18 @@ export default function HistoryTab({
       return va < vb ? -1 * dir : va > vb ? 1 * dir : 0
     })
   }, [histFull, histRows, showAll, filter, statusFilter, sortKey, sortDir])
-
   const emailPreviewHtml = useMemo(() => buildEmailHtml(histFull, kpis, day, range), [histFull, kpis, day, range])
-
   function toggleSort(k: SortKey) {
     if (sortKey === k) setSortDir((d) => (d === "asc" ? "desc" : "asc"))
     else { setSortKey(k); setSortDir("asc") }
   }
-
   function exportExcel() {
     if (!selectedDay || histFull.length === 0) return
     const wb = buildExcelWorkbook(histFull, kpis, day, range)
     XLSX.writeFile(wb, `BackupsHistorico_${selectedDay}.xlsx`)
   }
-
   const editingJob = editingJobId ? histFull.find((r) => r.jobId === editingJobId) ?? histRows.find((r) => r.jobId === editingJobId) ?? null : null
   const editingOverride = editingJob ? (config as any)?.manualOverrides?.[editingJob.jobName] : undefined
-
   async function saveManualOverride(jobName: string, override: ManualOverride | null) {
     const currentCfg = ((await api().getConfig()) as AppConfig | null) ?? config
     if (!currentCfg) return
@@ -170,7 +161,6 @@ export default function HistoryTab({
     if (!ok) { alert("No se pudo guardar."); return }
     await onManualOverrideSaved(nextCfg)
   }
-
   return (
     <div style={{ display: "flex", gap: 20, alignItems: "flex-start", flexWrap: "wrap" }}>
       <div style={{ flex: "0 1 320px", minWidth: 280, width: "100%", maxWidth: 320 }}>
@@ -179,7 +169,6 @@ export default function HistoryTab({
         </div>
         <HistoryCalendar availableDays={availableDays} selectedDay={selectedDay} onSelect={loadDay} />
       </div>
-
       <div style={{ flex: "1 1 640px", minWidth: 0 }}>
         {!selectedDay && (
           <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: 280, color: "#475569", flexDirection: "column", gap: 14, padding: "16px 12px", textAlign: "center" }}>
@@ -187,22 +176,18 @@ export default function HistoryTab({
             <span style={{ fontSize: 14, color: "#64748b" }}>Selecciona un día en el calendario</span>
           </div>
         )}
-
         {selectedDay && loadingDay && (
           <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: 200, color: "#64748b", fontSize: 13 }}>Cargando {String(selectedDay)}...</div>
         )}
-
         {selectedDay && dayError && (
           <div style={{ color: "#ef4444", padding: "10px 14px", background: "rgba(239,68,68,.1)", borderRadius: 6, border: "1px solid rgba(239,68,68,.3)", marginBottom: 12 }}>{dayError}</div>
         )}
-
         {selectedDay && !loadingDay && !dayError && histFull.length > 0 && (
           <>
             <div style={{ marginBottom: 14 }}>
               <div style={{ fontSize: 16, fontWeight: 700, color: "#e2e8f0" }}>{String(day)}</div>
               <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>{String(range)}</div>
             </div>
-
             <div className="kpis" style={{ marginBottom: 14 }}>
               <Kpi label="Jobs" value={kpis.total} />
               <Kpi label="Éxitos" value={kpis.success} />
@@ -210,7 +195,6 @@ export default function HistoryTab({
               <Kpi label="Errores" value={kpis.failed} />
               <Kpi label="En curso / Pend." value={kpis.running + kpis.pending} />
             </div>
-
             <div className="toolbar" style={{ marginBottom: 10 }}>
               <input placeholder="Buscar job" value={filter} onChange={(e) => setFilter(e.target.value)} className="search-input" />
               <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="status-select">
@@ -224,7 +208,6 @@ export default function HistoryTab({
               <button onClick={() => setEmailModal(true)} style={{ background: "#059669", color: "white", borderRadius: 6, padding: "7px 14px", fontSize: 13, fontWeight: 600 }}>Enviar</button>
               <button onClick={exportExcel} style={{ background: "#2563eb", color: "white" }}>Exportar</button>
             </div>
-
             <JobTable rows={filtered} onEditComment={setEditingJobId} onOpenExecutions={onOpenExecutions} onOpenLog={(jobName) => {
               const row = histFull.find((r) => r.jobName === jobName) ?? histRows.find((r) => r.jobName === jobName)
               setLogModalData({
@@ -237,13 +220,11 @@ export default function HistoryTab({
           </>
         )}
       </div>
-
       {editingJobId && editingJob && (
         <CommentEditor jobName={editingJob.jobName} currentComment={editingOverride?.comment ?? ""}
           currentStatus={editingOverride?.status ?? normalizeManualStatusUi(editingJob.status)}
           autoReason={editingJob.reason ?? ""} onSave={saveManualOverride} onClose={() => setEditingJobId(null)} />
       )}
-
       {emailModal && <EmailModal htmlPreview={emailPreviewHtml} day={day} onClose={() => setEmailModal(false)} />}
       {logModalData && (
         <div className="email-modal-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) setLogModalData(null) }} style={{ zIndex: 9999 }}>
@@ -253,14 +234,13 @@ export default function HistoryTab({
               <button className="email-modal-close" onClick={() => setLogModalData(null)}>×</button>
             </div>
             <div style={{ padding: 16, overflowY: 'auto', maxHeight: '65vh' }}>
-              <pre style={{ background: '#000', color: logModalData?.color || '#00ff00', padding: 16, borderRadius: 6, fontFamily: 'monospace', fontSize: 13, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+              <pre style={{ background: '#000', color: logModalData?.color || '#E5E7EB', padding: 16, borderRadius: 6, fontFamily: 'monospace', fontSize: 13, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
                 {logModalData?.content ? String(logModalData.content) : 'No hay contenido o no se pudo extraer.'}
               </pre>
             </div>
           </div>
         </div>
       )}
-
     </div>
   )
 }

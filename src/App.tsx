@@ -1,3 +1,4 @@
+
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import * as XLSX from "xlsx-js-style"
 import TokenGate from "./components/TokenGate"
@@ -35,10 +36,8 @@ import ConfigurationPanel from "./components/ConfigurationPanel"
 import HistoryTab from "./components/HistoryTab"
 import VersionModal from "./components/VersionModal"
 import { APP_VERSION } from "./version"
-
 // Flag para diferenciar entre modo Entra ID (SSO+MFA) y Token clasico.
 const USE_ENTRA = import.meta.env.VITE_BM_USE_ENTRA === "1"
-
 async function handleExportScheduleExcel() {
   try {
     const res = await api().getSchedule30()
@@ -47,7 +46,6 @@ async function handleExportScheduleExcel() {
     alert(`Error getSchedule30: ${String(e)}`)
   }
 }
-
 function getAs400LogColor(jobName?: string) {
   const name = String(jobName || "").toLowerCase()
   // Comprobamos SDB/TGT primero porque "sdb" contiene "sd" como substring.
@@ -57,7 +55,18 @@ function getAs400LogColor(jobName?: string) {
   if (name.includes("as400 sd") || name.includes("backup sd")) return "#00FF00"
   return "#E5E7EB"
 }
-
+// Construye el mismo título "Backup VDC/Barracuda/AS400 xxx" que ya usa el
+// modal de log del Histórico (HistoryTab.tsx), en vez del prefijo genérico
+// "LOG AS/400 -" / "LOG BACKUP -". Se unifica aquí para que Dashboard e
+// Histórico muestren siempre el mismo título para el mismo job.
+function getLogModalTitle(jobName?: string | null): string {
+  const clean = String(jobName || "Desconocido").trim()
+  if (/^backup\s+/i.test(clean)) return clean
+  if (/^vdc\s+/i.test(clean)) return `Backup ${clean}`
+  if (/^barracuda\s+/i.test(clean)) return `Backup ${clean}`
+  if (/^as400\s+/i.test(clean)) return `Backup ${clean}`
+  return clean
+}
 function formatBackupTitleDay(value?: string | null) {
   if (!value) return ""
   const d = new Date(value)
@@ -68,7 +77,6 @@ function formatBackupTitleDay(value?: string | null) {
     year: "numeric",
   }).toUpperCase()
 }
-
 function formatBackupWindowRange(startValue?: string | null, endValue?: string | null) {
   if (!startValue || !endValue) return ""
   const start = new Date(startValue)
@@ -89,7 +97,6 @@ function formatBackupWindowRange(startValue?: string | null, endValue?: string |
     })
   return `Ventana ${fmtDate(start)}, ${fmtTime(start)} — ${fmtDate(displayEnd)}, ${fmtTime(displayEnd)}`
 }
-
 function normalizeNameForUi(value?: string | null) {
   return String(value || "")
     .normalize("NFD")
@@ -98,11 +105,9 @@ function normalizeNameForUi(value?: string | null) {
     .trim()
     .toLowerCase()
 }
-
 function normalizeUiState(value?: string | null) {
   return String(value || "").trim().toLowerCase()
 }
-
 function getDisplayState(row?: JobRowUi | null): string {
   const anyRow = row as any
   const raw = String(
@@ -118,11 +123,9 @@ function getDisplayState(row?: JobRowUi | null): string {
   if (s === "PENDING") return "RUNNING"
   return s
 }
-
 function getDisplayStateLower(row?: JobRowUi | null): string {
   return getDisplayState(row).toLowerCase()
 }
-
 function getStateLabel(row?: JobRowUi | null): string {
   const state = getDisplayState(row)
   if (state === "SUCCESS") return "SUCCESS"
@@ -132,7 +135,6 @@ function getStateLabel(row?: JobRowUi | null): string {
   if (state === "NO-RUN") return "SIN EJECUCIÓN"
   return state || "-"
 }
-
 function getStateClass(row?: JobRowUi | null): string {
   const state = getDisplayState(row)
   if (state === "SUCCESS") return "success"
@@ -142,7 +144,6 @@ function getStateClass(row?: JobRowUi | null): string {
   if (state === "NO-RUN") return "no-run"
   return "unknown"
 }
-
 function isNoRunRow(row?: JobRowUi | null) {
   const state = getDisplayState(row)
   const status = normalizeUiState((row as any)?.status)
@@ -154,11 +155,9 @@ function isNoRunRow(row?: JobRowUi | null) {
     status === "idle"
   )
 }
-
 function isSuccessRow(row?: JobRowUi | null) {
   return getDisplayState(row) === "SUCCESS"
 }
-
 function isBackupPrRrRow(row?: JobRowUi | null) {
   const name = normalizeNameForUi(row?.jobName || "")
   return (
@@ -168,7 +167,6 @@ function isBackupPrRrRow(row?: JobRowUi | null) {
     name === "backup as400 rr"
   )
 }
-
 function detectIsAs400Job(source: any, fallbackName?: string | null): boolean {
   const idStr = String(source?.jobId ?? "").toLowerCase()
   const nameStr = String(source?.jobName ?? source?.name ?? fallbackName ?? "").toLowerCase()
@@ -179,7 +177,6 @@ function detectIsAs400Job(source: any, fallbackName?: string | null): boolean {
   if (/sdb\/tgt/.test(nameStr)) return true
   return false
 }
-
 // Los jobs AS400 requieren SIEMPRE revision manual del log antes de darse
 // por buenos: aunque el correo llegue y el backend los marque como SUCCESS
 // automaticamente, ese SUCCESS no implica que alguien haya validado el
@@ -188,7 +185,6 @@ function detectIsAs400Job(source: any, fallbackName?: string | null): boolean {
 // excluimos de todos los KPIs (igual que se excluyen los NO-RUN).
 const AS400_PENDING_REVIEW_LABEL = "PDTE COMPROBACIÓN"
 const AS400_PENDING_REVIEW_STATUS = "pdte-comprobacion"
-
 function hasManualOverrideFor(
   jobName: string | undefined | null,
   manualOverrides: any,
@@ -209,7 +205,6 @@ function hasManualOverrideFor(
   if (Number.isNaN(ovDate.getTime()) || Number.isNaN(winStart.getTime())) return true
   return ovDate.getTime() >= winStart.getTime()
 }
-
 function applyAs400PendingReview(
   row: JobRowUi,
   manualOverrides: any,
@@ -235,11 +230,9 @@ function applyAs400PendingReview(
     stateClass: "unknown",
   } as any
 }
-
 function isAs400PendingReviewRow(row?: JobRowUi | null): boolean {
   return getDisplayState(row) === AS400_PENDING_REVIEW_LABEL
 }
-
 function normalizeB2Row(row: JobRowUi): JobRowUi {
   const anyRow = row as any
   const rawStatus = String(anyRow?.status || anyRow?.state || "").trim().toLowerCase()
@@ -271,11 +264,9 @@ function normalizeB2Row(row: JobRowUi): JobRowUi {
     } as any),
   } as any
 }
-
 function normalizeB2Rows(input: JobRowUi[] | undefined | null): JobRowUi[] {
   return (Array.isArray(input) ? input : []).map(normalizeB2Row)
 }
-
 function computeB2Kpis(inputRows: JobRowUi[]) {
   const kpis = {
     total: 0,
@@ -312,7 +303,6 @@ function computeB2Kpis(inputRows: JobRowUi[]) {
   }
   return kpis
 }
-
 // Textos descriptivos que se muestran debajo de los 6 botones de filtro
 // (category-filter-bar), segun la categoria activa. Vista movil y escritorio.
 const CATEGORY_DESCRIPTIONS: Record<string, string> = {
@@ -323,7 +313,6 @@ const CATEGORY_DESCRIPTIONS: Record<string, string> = {
   as400: "Sólo backups de IBM AS400. El fin de semana sólo se ejecutan 2, SDB/TGT y SD.",
   nok: "Backups que no han terminado correctamente y que hay que corregir (Warnings y Errores).",
 }
-
 // Titulo + instrucciones que se muestran (solo en vista movil) cuando el
 // Guardian pulsa sobre los KPIs "Avisos", "Errores" o "Pdte. Comprobacion",
 // justo encima del listado de jobs filtrado por ese estado.
@@ -351,7 +340,6 @@ const STATUS_FILTER_DESCRIPTIONS: Partial<Record<DashboardKpiFilter, { title: st
     ],
   },
 }
-
 // Props opcionales de Entra ID: solo se pasan desde main.tsx cuando
 // USE_ENTRA=1 (ver AppWithMsal en main.tsx). En modo Token clasico
 // (USE_ENTRA=0) llegan como undefined y el badge simplemente no se pinta.
@@ -396,30 +384,23 @@ export default function App({
   const [dbJobs, setDbJobs] = useState<string[]>([])
   const [logModalData, setLogModalData] = useState<{ jobName: string; content: string | null; isAs400?: boolean } | null>(null)
   const [versionModalOpen, setVersionModalOpen] = useState(false)
-
   const refresh = useCallback(async () => {
     setLoading(true)
     setErr(null)
-
     try {
       const p = ((await api().refresh()) as RefreshPayload | null) ?? null
-
       if ((p as any)?.ok) {
         setRows(normalizeB2Rows(((p as any).rows ?? []) as JobRowUi[]))
         setFullRows(normalizeB2Rows(((p as any).fullRows ?? []) as JobRowUi[]))
         setLastRun((p as any).ts ?? null)
-
         if ((p as any).windowStart) {
           setWindowStart((p as any).windowStart)
-
           if (tab === "dashboard") {
             setDisplayWindowStart((p as any).windowStart)
           }
         }
-
         if ((p as any).windowEnd) {
           setWindowEnd((p as any).windowEnd)
-
           if (tab === "dashboard") {
             setDisplayWindowEnd((p as any).windowEnd)
           }
@@ -433,7 +414,6 @@ export default function App({
       setLoading(false)
     }
   }, [tab])
-
   useEffect(() => {
         function handleUnauthorized() {
       if (USE_ENTRA) {
@@ -446,12 +426,10 @@ export default function App({
         const state = unauthorizedRetryRef.current
         const now = Date.now()
         const elapsed = now - state.lastAt
-
         if (state.count >= 5) {
           setErr("No se pudo autenticar con Microsoft Entra ID. Recarga la pagina (F5).")
           return
         }
-
         // Fix: en movil, justo tras volver de Authenticator, pueden llegar
         // varios 401 muy seguidos mientras MSAL termina de asentar el token
         // en segundo plano. Antes, si el 401 llegaba dentro de la ventana
@@ -470,19 +448,15 @@ export default function App({
           }, wait)
           return
         }
-
         state.count += 1
         state.lastAt = now
         console.warn(`[AUTH] 401 en modo Entra ID, reintento ${state.count}/5...`)
         refresh()
         return
       }
-
       setAuthGateOpen(true)
     }
-
     window.addEventListener("bm:unauthorized", handleUnauthorized)
-
     if (!USE_ENTRA) {
       try {
         const hasToken = !!window.localStorage.getItem("bm.authToken")
@@ -491,16 +465,13 @@ export default function App({
         // ignorar
       }
     }
-
     return () => {
       window.removeEventListener("bm:unauthorized", handleUnauthorized)
     }
   }, [refresh])
-
   async function reloadJobsDirectory() {
     try {
       const res = await api().listJobs()
-
       if (res?.ok && Array.isArray(res.jobs)) {
         setDbJobs(
           res.jobs
@@ -514,19 +485,15 @@ export default function App({
     } catch {
       // Si falla listJobs, intentamos refrescar estado igualmente.
     }
-
     try {
       const p = ((await api().refresh()) as RefreshPayload | null) ?? null
-
       if ((p as any)?.ok) {
         setRows(normalizeB2Rows(((p as any).rows ?? []) as JobRowUi[]))
         setFullRows(normalizeB2Rows(((p as any).fullRows ?? []) as JobRowUi[]))
         setLastRun((p as any).ts ?? null)
-
         if ((p as any).windowStart) {
           setWindowStart((p as any).windowStart)
         }
-
         if ((p as any).windowEnd) {
           setWindowEnd((p as any).windowEnd)
         }
@@ -535,15 +502,12 @@ export default function App({
       // No rompemos la navegación si el refresh falla puntualmente.
     }
   }
-
   useEffect(() => {
     if (configPanelOpen || editingJobId || emailModal || logModalData) return
-
     api().getConfig().then((c: AppConfig | null) => {
       setConfig(c)
       if (!(c as any)?.pin) setPinUnlocked(true)
     })
-
     api()
       .listJobs()
       .then((res: any) => {
@@ -559,27 +523,21 @@ export default function App({
         }
       })
       .catch(console.error)
-
     const maybeCleanup = api().onAutoUpdate?.((p: RefreshPayload) => {
       if ((p as any)?.ok) {
         setRows(normalizeB2Rows(((p as any).rows ?? []) as JobRowUi[]))
         setFullRows(normalizeB2Rows(((p as any).fullRows ?? []) as JobRowUi[]))
-
         if ((p as any).ts) {
           setLastRun((p as any).ts)
         }
-
         if ((p as any).windowStart) {
           setWindowStart((p as any).windowStart)
-
           if (tab === "dashboard") {
             setDisplayWindowStart((p as any).windowStart)
           }
         }
-
         if ((p as any).windowEnd) {
           setWindowEnd((p as any).windowEnd)
-
           if (tab === "dashboard") {
             setDisplayWindowEnd((p as any).windowEnd)
           }
@@ -588,52 +546,40 @@ export default function App({
         refresh()
       }
     })
-
     let pollingId: ReturnType<typeof setInterval> | null = null
-
     if (!api().onAutoUpdate) {
       pollingId = setInterval(() => refresh(), 5 * 60 * 1000)
     }
-
     refresh()
-
     return () => {
       if (typeof maybeCleanup === "function") maybeCleanup()
       if (pollingId) clearInterval(pollingId)
     }
   }, [refresh, configPanelOpen, editingJobId, emailModal, logModalData, tab])
-
   useEffect(() => {
     if (tab === "dashboard") {
       setDisplayWindowStart(windowStart)
       setDisplayWindowEnd(windowEnd)
     }
   }, [tab, windowStart, windowEnd])
-
   const handleHistoryWindowChange = useCallback((start: string | Date | null, end: string | Date | null) => {
     setDisplayWindowStart(start instanceof Date ? start.toISOString() : start)
     setDisplayWindowEnd(end instanceof Date ? end.toISOString() : end)
   }, [])
-
   function unlockWithPin() {
     if (pinInput === (config as any)?.pin) setPinUnlocked(true)
     else alert("PIN incorrecto")
   }
-
   const allJobNames = useMemo(() => {
     const names = new Set<string>(dbJobs.filter(Boolean))
-
     fullRows.forEach((r) => {
       if (r?.jobName) names.add(String(r.jobName))
     })
-
     rows.forEach((r) => {
       if (r?.jobName) names.add(String(r.jobName))
     })
-
     return Array.from(names).sort((a, b) => String(a).localeCompare(String(b), "es", { sensitivity: "base" }))
   }, [dbJobs, fullRows, rows])
-
   const { fullRowsCalendario } = useMemo(() => {
     // Comprobamos el dia de la semana de la VENTANA OPERACIONAL mostrada
     // (windowStart), no el dia actual del sistema/navegador ni la fecha
@@ -646,45 +592,33 @@ export default function App({
       ventanaDate && !Number.isNaN(ventanaDate.getTime())
         ? ventanaDate.getDay() === 0 || ventanaDate.getDay() === 6
         : false
-
     if (!esFinDeSemana) {
       return { rowsCalendario: rows, fullRowsCalendario: fullRows }
     }
-
     const filtrarJob = (r: JobRowUi) => {
       if (!r.jobName) return true
-
       if (isBackupPrRrRow(r)) {
         return false
       }
-
       return true
     }
-
     return {
       rowsCalendario: rows.filter(filtrarJob),
       fullRowsCalendario: fullRows.filter(filtrarJob),
     }
   }, [rows, fullRows, windowStart])
-
   const dashboardRows = useMemo(() => {
     const manualOverrides = (config as any)?.manualOverrides
-
     return fullRowsCalendario
       .filter((r) => !isNoRunRow(r))
       .map((r) => applyAs400PendingReview(r, manualOverrides, windowStart))
   }, [fullRowsCalendario, config, windowStart])
-
   const kpis = useMemo(() => computeB2Kpis(dashboardRows), [dashboardRows])
-
   const { day, range } = getWindowParts(windowStart, windowEnd)
-
   const effectiveWindowStart = displayWindowStart || windowStart
   const effectiveWindowEnd = displayWindowEnd || windowEnd
-
   const titleDay = formatBackupTitleDay(effectiveWindowStart)
   const titleRange = formatBackupWindowRange(effectiveWindowStart, effectiveWindowEnd)
-
   // Los filtros usan getDisplayState (igual que los KPIs en computeB2Kpis).
   // Así se respeta SIEMPRE el override manual del operador y evitamos que el
   // texto del detalle (p.ej. "Error throttling de un buzón") clasifique mal
@@ -692,31 +626,24 @@ export default function App({
   const isWarningRow = useCallback((r: JobRowUi) => {
     return getDisplayState(r) === "WARNING"
   }, [])
-
   const isErrorRow = useCallback((r: JobRowUi) => {
     return getDisplayState(r) === "ERROR"
   }, [])
-
   const isSuccessRowCb = useCallback((r: JobRowUi) => {
     return getDisplayState(r) === "SUCCESS"
   }, [])
-
   const isRunningOrPendingRow = useCallback((r: JobRowUi) => {
     return getDisplayState(r) === "RUNNING"
   }, [])
-
   const filtered = useMemo(() => {
     let source = dashboardRows
-
     if (activeCategory !== "all") {
       source = source.filter((r) => {
         const name = safeLower(r.jobName || "")
-
         if (activeCategory === "nok") {
           if (isNoRunRow(r)) return false
           return isErrorRow(r) || isWarningRow(r)
         }
-
         if (activeCategory === "veeam") {
           return (
             (r.source === "sql" || r.source === "both") &&
@@ -728,7 +655,6 @@ export default function App({
             !name.includes("as400")
           )
         }
-
         if (activeCategory === "vdc") {
           return (
             name.includes("vdc") ||
@@ -742,11 +668,9 @@ export default function App({
             )
           )
         }
-
         if (activeCategory === "barracuda") {
           return name.includes("barracuda")
         }
-
         if (activeCategory === "as400") {
           return (
             name.includes("as400") ||
@@ -758,36 +682,28 @@ export default function App({
             )
           )
         }
-
         return true
       })
     }
-
     if (statusFilter !== "all") {
       source = source.filter((r) => {
         if (statusFilter === "as400-pending") {
           return isAs400PendingReviewRow(r)
         }
-
         if (isNoRunRow(r)) return false
-
         if (statusFilter === "success") return isSuccessRowCb(r)
         if (statusFilter === "warning") return isWarningRow(r)
         if (statusFilter === "error") return isErrorRow(r)
         if (statusFilter === "failed") return isErrorRow(r)
         if (statusFilter === "running") return isRunningOrPendingRow(r)
-
         return true
       })
     }
-
     const base = source.filter((r) => {
       if (filter && !safeLower(r.jobName).includes(safeLower(filter))) return false
       return true
     })
-
     const dir = sortDir === "asc" ? 1 : -1
-
     return [...base].sort((a, b) => {
       const get = (r: JobRowUi): string | number => {
         switch (sortKey) {
@@ -813,10 +729,8 @@ export default function App({
             return 0
         }
       }
-
       const va = get(a)
       const vb = get(b)
-
       return va < vb ? -1 * dir : va > vb ? 1 * dir : 0
     })
   }, [
@@ -831,17 +745,14 @@ export default function App({
     isSuccessRowCb,
     isRunningOrPendingRow,
   ])
-
   const emailPreviewHtml = useMemo(
     () => buildEmailHtml(dashboardRows, kpis, day, range),
     [dashboardRows, kpis, day, range]
   )
-
   function exportToExcel() {
     const wb = buildExcelWorkbook(dashboardRows, kpis, day, range)
     XLSX.writeFile(wb, `Backups_${(day || "sin_fecha").replace(/\s+/g, "_")}.xlsx`)
   }
-
   function toggleSort(key: SortKey) {
     if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"))
     else {
@@ -849,41 +760,32 @@ export default function App({
       setSortDir("asc")
     }
   }
-
   async function handleEntraLogout() {
     await onEntraLogout?.()
   }
-
   function handleDashboardKpiClick(next: DashboardKpiFilter) {
     setStatusFilter(next)
     setShowAll(true)
     setActiveCategory("all")
   }
-
   const editingJob = editingJobId
     ? fullRows.find((r) => r.jobId === editingJobId) ?? rows.find((r) => r.jobId === editingJobId) ?? null
     : null
-
   const editingOverride = editingJob ? (config as any)?.manualOverrides?.[editingJob.jobName] : undefined
-
   async function handleConfigUpdated(nextCfg: AppConfig) {
     const fresh = ((await api().getConfig()) as AppConfig | null) ?? nextCfg
     setConfig(fresh)
     await refresh()
   }
-
   async function handleManualOverrideSaved(nextCfg: AppConfig) {
     const fresh = ((await api().getConfig()) as AppConfig | null) ?? nextCfg
     setConfig(fresh)
     await refresh()
   }
-
   async function saveManualOverride(jobName: string, override: ManualOverride | null) {
     const currentCfg = ((await api().getConfig()) as AppConfig | null) ?? config
     if (!currentCfg) return
-
     const nextOverrides = { ...((currentCfg as any).manualOverrides ?? {}) }
-
     if (!override) {
       delete nextOverrides[jobName]
     } else {
@@ -893,26 +795,20 @@ export default function App({
         ...(override.comment?.trim() ? { comment: override.comment.trim() } : {}),
       }
     }
-
     const nextCfg = { ...(currentCfg as any), manualOverrides: nextOverrides } as AppConfig
     const ok = await api().saveConfig(nextCfg)
-
     if (!ok) {
       alert("No se pudo guardar.")
       return
     }
-
     await handleManualOverrideSaved(nextCfg)
   }
-
   async function loadExecutions(jobName: string | null) {
     setExecutionsError(null)
     setExecutionsLoading(true)
     setExecutionsData(null)
-
     try {
       const res = (await api().getJobExecutions(jobName || "")) as JobExecutionsResponse
-
       if (res?.ok) setExecutionsData(res)
       else setExecutionsError(res?.error ?? "Error al cargar")
     } catch (e: any) {
@@ -921,50 +817,40 @@ export default function App({
       setExecutionsLoading(false)
     }
   }
-
   async function openExecutionsView(jobName?: any) {
     const targetJob = typeof jobName === "string" && jobName.trim() ? jobName.trim() : null
-
     setTab("executions")
     setSelectedJobName(targetJob)
     setExecutionsError(null)
     setExecutionsData(null)
-
     if (targetJob) {
       await loadExecutions(targetJob)
     } else {
       await reloadJobsDirectory()
     }
   }
-
   useEffect(() => {
     if (tab === "executions" && !selectedJobName && allJobNames.length === 0) {
       reloadJobsDirectory()
     }
   }, [tab, selectedJobName, allJobNames.length])
-
   async function openLogModal(jobName: string) {
     // Detección inicial por nombre (por si getJobExecutions tarda o falla)
     const rowFromMemory: any =
       fullRows.find((r) => r.jobName === jobName) ??
       rows.find((r) => r.jobName === jobName) ??
       null
-
     const initialIsAs400 = detectIsAs400Job(rowFromMemory, jobName)
-
     setLogModalData({
       jobName,
       content: "Cargando log...",
       isAs400: initialIsAs400,
     })
-
     try {
       const res = await api().getJobExecutions(jobName, 1)
-
       const execution = Array.isArray((res as any)?.executions)
         ? (res as any).executions[0]
         : null
-
       const content =
         execution?.as400LogContent ??
         execution?.logContent ??
@@ -974,9 +860,7 @@ export default function App({
         execution?.body ??
         execution?.bodyPreview ??
         null
-
       const finalIsAs400 = detectIsAs400Job(execution ?? rowFromMemory, jobName)
-
       setLogModalData({
         jobName,
         content,
@@ -990,7 +874,6 @@ export default function App({
       })
     }
   }
-
   return (
     <>
       <div className="app compact-mode">
@@ -1005,7 +888,6 @@ export default function App({
               v{APP_VERSION}
             </button>
           </h1>
-
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <div className="meta">
               {lastRun
@@ -1016,7 +898,6 @@ export default function App({
                   })}`
                 : "Cargando..."}
             </div>
-
             <button
               type="button"
               className="mobile-refresh-btn"
@@ -1027,7 +908,6 @@ export default function App({
             >
               ↻
             </button>
-
             {entraUsername && (
               <div
                 style={{
@@ -1043,7 +923,6 @@ export default function App({
                 }}
               >
                 <span>{entraUsername}</span>
-
                 <button
                   type="button"
                   onClick={handleEntraLogout}
@@ -1063,7 +942,6 @@ export default function App({
             )}
           </div>
         </div>
-
         <div className="tabs">
           <div
             className={`tab ${tab === "dashboard" ? "active" : ""}`}
@@ -1071,20 +949,17 @@ export default function App({
           >
             Dashboard
           </div>
-
           <div
             className={`tab ${tab === "history" ? "active" : ""}`}
             onClick={() => setTab("history")}
           >
             Histórico
           </div>
-
           {tab !== "executions" && (
             <div className="window-title">
               <span className="window-title-main">
                 SITUACIÓN BACKUP DEL DÍA {titleDay}
               </span>
-
               {titleRange && (
                 <span className="window-title-range">
                   {titleRange}
@@ -1092,9 +967,7 @@ export default function App({
               )}
             </div>
           )}
-
           <div className="flex-spacer" />
-
           <button
             type="button"
             className="tabs-config-btn"
@@ -1103,7 +976,6 @@ export default function App({
           >
             <BackupsIcon size={20} />
           </button>
-
           <button
             type="button"
             className="tabs-config-btn white-icon"
@@ -1113,14 +985,12 @@ export default function App({
             <WhiteGearIcon size={20} />
           </button>
         </div>
-
         <div className="content">
           {tab === "dashboard" && (
             <>
               <div className="kpis kpis-mobile-grouped">
                 <div className="kpi-group kpi-group-ok">
                   <div className="kpi-group-title">Sin intervención del Guardián</div>
-
                   <Kpi
                     label="Jobs hoy"
                     value={kpis.total}
@@ -1128,7 +998,6 @@ export default function App({
                     active={statusFilter === "all"}
                     onClick={() => handleDashboardKpiClick("all")}
                   />
-
                   <Kpi
                     label="Éxitos"
                     value={kpis.success}
@@ -1136,7 +1005,6 @@ export default function App({
                     active={statusFilter === "success"}
                     onClick={() => handleDashboardKpiClick("success")}
                   />
-
                   <Kpi
                     label="En curso"
                     value={kpis.running}
@@ -1145,10 +1013,8 @@ export default function App({
                     onClick={() => handleDashboardKpiClick("running")}
                   />
                 </div>
-
                 <div className="kpi-group kpi-group-action">
                   <div className="kpi-group-title">Requieren intervención</div>
-
                   <Kpi
                     label="Avisos"
                     value={kpis.warning}
@@ -1156,7 +1022,6 @@ export default function App({
                     active={statusFilter === "warning"}
                     onClick={() => handleDashboardKpiClick("warning")}
                   />
-
                   <Kpi
                     label="Errores"
                     value={kpis.failed}
@@ -1164,7 +1029,6 @@ export default function App({
                     active={statusFilter === "error"}
                     onClick={() => handleDashboardKpiClick("error")}
                   />
-
                   <Kpi
                     label="Pdte. Comprobación"
                     value={kpis.as400PendingReview}
@@ -1174,7 +1038,6 @@ export default function App({
                   />
                 </div>
               </div>
-
               <div
                 className="toolbar"
                 style={{
@@ -1191,13 +1054,10 @@ export default function App({
                     onChange={(e) => setFilter(e.target.value)}
                     className="search-input"
                   />
-
                   <div className="flex-spacer" />
-
                   <button onClick={() => setEmailModal(true)} style={{ background: "#059669", color: "white" }}>
                     Enviar
                   </button>
-
                   <button
                     onClick={exportToExcel}
                     disabled={dashboardRows.length === 0}
@@ -1205,7 +1065,6 @@ export default function App({
                   >
                     Exportar
                   </button>
-
                   <button
                     onClick={handleExportScheduleExcel}
                     style={{
@@ -1220,7 +1079,6 @@ export default function App({
                   >
                     Planificador
                   </button>
-
                   <button
                     onClick={refresh}
                     disabled={loading}
@@ -1229,7 +1087,6 @@ export default function App({
                     {loading ? "Actualizando..." : "Actualizar"}
                   </button>
                 </div>
-
                 <div
                   className="category-filter-bar"
                   style={{
@@ -1244,7 +1101,6 @@ export default function App({
                   {JOB_CATEGORIES.map((cat) => {
                     const isNok = cat.id === "nok"
                     const isActive = activeCategory === cat.id
-
                     let btnStyle: CSSProperties = {
                       border: "1px solid var(--border)",
                       padding: "6px 14px",
@@ -1254,7 +1110,6 @@ export default function App({
                       cursor: "pointer",
                       transition: "all 0.15s ease",
                     }
-
                     if (isNok) {
                       btnStyle.marginLeft = "14px"
                       btnStyle.background = isActive ? "#e28704" : "rgba(245, 158, 11, 0.2)"
@@ -1264,7 +1119,6 @@ export default function App({
                       btnStyle.background = isActive ? "#2563eb" : "var(--panel-2)"
                       btnStyle.color = isActive ? "#ffffff" : "var(--text)"
                     }
-
                     return (
                       <button
                         key={cat.id}
@@ -1279,26 +1133,21 @@ export default function App({
                     )
                   })}
                 </div>
-
                                 {statusFilter === "all" && (
                   <div className="category-filter-description">
                     {CATEGORY_DESCRIPTIONS[activeCategory]}
                   </div>
                 )}
               </div>
-
               {err && <span className="error-badge">{err}</span>}
-
               {STATUS_FILTER_DESCRIPTIONS[statusFilter] && (
                 <div className="mobile-status-filter-description">
                   <div className="mobile-status-filter-title">
                     {STATUS_FILTER_DESCRIPTIONS[statusFilter]!.title}
                   </div>
-
                   <div className="mobile-status-filter-instructions-label">
                     INSTRUCCIONES:
                   </div>
-
                   <ul className="mobile-status-filter-instructions">
                     {STATUS_FILTER_DESCRIPTIONS[statusFilter]!.instructions.map((line, idx) => (
                       <li key={idx}>{line}</li>
@@ -1306,7 +1155,6 @@ export default function App({
                   </ul>
                 </div>
               )}
-
               <JobTable
                 rows={filtered}
                 onEditComment={setEditingJobId}
@@ -1318,7 +1166,6 @@ export default function App({
               />
             </>
           )}
-
           {tab === "history" && (
             <HistoryTab
               onWindowChange={handleHistoryWindowChange}
@@ -1328,7 +1175,6 @@ export default function App({
               activeCategory={activeCategory}
             />
           )}
-
           {tab === "executions" && (
             <ExecutionsTab
               jobName={selectedJobName}
@@ -1350,7 +1196,6 @@ export default function App({
             />
           )}
         </div>
-
         <ConfigurationPanel
           open={configPanelOpen}
           onClose={() => setConfigPanelOpen(false)}
@@ -1362,7 +1207,6 @@ export default function App({
           onUnlock={unlockWithPin}
           allJobNames={allJobNames}
         />
-
         {editingJobId && editingJob && (
           <CommentEditor
             jobName={editingJob.jobName}
@@ -1373,7 +1217,6 @@ export default function App({
             onClose={() => setEditingJobId(null)}
           />
         )}
-
         {emailModal && (
           <EmailModal
             htmlPreview={emailPreviewHtml}
@@ -1381,9 +1224,7 @@ export default function App({
             onClose={() => setEmailModal(false)}
           />
         )}
-
         {versionModalOpen && <VersionModal onClose={() => setVersionModalOpen(false)} />}
-
         {logModalData && (
           <div
             className="email-modal-overlay"
@@ -1396,7 +1237,7 @@ export default function App({
               onClick={(e) => e.stopPropagation()}
             >
               <div className="email-modal-header">
-                <h2>{logModalData?.isAs400 ? "LOG AS/400" : "LOG BACKUP"} - {String(logModalData?.jobName || "Desconocido")}</h2>
+                <h2>{getLogModalTitle(logModalData?.jobName)}</h2>
                 <button
                   className="email-modal-close"
                   onClick={() => setLogModalData(null)}
@@ -1429,7 +1270,6 @@ export default function App({
           </div>
         )}
       </div>
-
       {!USE_ENTRA && (
         <TokenGate
           open={authGateOpen}
