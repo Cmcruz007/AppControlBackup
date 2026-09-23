@@ -1074,22 +1074,26 @@ async function getJobExecutionsFromEmailHistory(cfg, rule, jobName, limit = 200,
           logContent = as400LogContent
           parsed = parseAs400Attachment(as400LogContent)
         } else if (ruleSource === 'barracuda') {
-          bodyContent = await getMessageBody(cfg, m.id)
-          bodyContent = cleanBarracudaFooter(bodyContent)
-
-          logContent = bodyContent
-          parsed = parseBarracudaBody(bodyContent)
+          // Para correos históricos, Graph puede no devolver el cuerpo completo.
+          // Conservamos bodyPreview como respaldo para mostrar y parsear el log.
+          const fullBody = await getMessageBody(cfg, m.id)
+          const rawBody = fullBody || m?.bodyPreview || ''
+          bodyContent = cleanBarracudaFooter(rawBody)
+          logContent = bodyContent || m?.bodyPreview || null
+          parsed = parseBarracudaBody(bodyContent || m?.bodyPreview || '')
         } else if (ruleSource === 'vdc') {
-          bodyContent = await getMessageBody(cfg, m.id)
-          bodyContent = cleanVdcFooter(bodyContent)
-
-          logContent = bodyContent
+          // Para correos históricos, Graph puede no devolver el cuerpo completo.
+          // Conservamos bodyPreview como respaldo para mostrar y parsear el log.
+          const fullBody = await getMessageBody(cfg, m.id)
+          const rawBody = fullBody || m?.bodyPreview || ''
+          bodyContent = cleanVdcFooter(rawBody)
+          logContent = bodyContent || m?.bodyPreview || null
           // FIX: antes se llamaba parseVdcBody(m) sin bodyContent, por lo
           // que endTime siempre salia null (ver comentario en parseVdcBody).
           // FIX 4: parseVdcBody ahora tambien recibe el mensaje completo
           // para poder usar message.bodyPreview como fallback si
           // bodyContent no permite extraer la fecha.
-          parsed = parseVdcBody(m, bodyContent)
+          parsed = parseVdcBody(m, bodyContent || m?.bodyPreview || '')
 
           // El correo de VDC solo trae la hora de FIN. El INICIO es fijo
           // por tipo de backup (ver VDC_FIXED_SCHEDULE / computeVdcFixedStart
