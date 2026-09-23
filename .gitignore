@@ -66,3 +66,4 @@ daily-report-last-sent.txt
 *.tsold 
 *.mdold 
 diff_*.txt
+.env.local
