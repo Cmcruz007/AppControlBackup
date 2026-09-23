@@ -20,10 +20,8 @@ function evaluateEmailRule(rule, emails, inicio, fin, defaultPrefix, criticality
       return matchSender && matchSubject
     })
     .sort((a, b) => new Date(b.receivedDateTime).getTime() - new Date(a.receivedDateTime).getTime())
-
   const chosen = inWindow[0] || null
   let status = 'pending', reason = 'Pendiente Recepcion'
-
   if (chosen) {
     reason = 'Correo Recibido'
     const text = `${chosen.subject || ''}\n${chosen.bodyPreview || ''}`.toLowerCase()
@@ -33,12 +31,10 @@ function evaluateEmailRule(rule, emails, inicio, fin, defaultPrefix, criticality
     else if (hasSuccess) status = 'success'
     else status = 'warning'
   }
-
   const jobName = rule.title ? rule.title : `[${defaultPrefix}] ${rule.subjectContains || rule.sender || rule.id}`
   const finalDate = chosen?.receivedDateTime ? new Date(chosen.receivedDateTime) : null
   let fEnd = ''
   if (finalDate && !Number.isNaN(finalDate.getTime())) fEnd = `${pad2(finalDate.getHours())}:${pad2(finalDate.getMinutes())}`
-
   return {
     jobId: `${defaultPrefix.toLowerCase()}:${rule.id}`, jobName,
     nextRun: inicio.toISOString(), lastRun: chosen?.receivedDateTime ?? null,
@@ -57,9 +53,7 @@ function evaluateAs400Rule(rule, emails, inicio, fin, criticalityByJob) {
   const startDate = inicio instanceof Date ? inicio : new Date(inicio)
   const dayOfWeek = startDate.getDay()
   if (isWorkdayRule && (dayOfWeek === 0 || dayOfWeek === 6)) return null
-
   const pattern = String(rule?.subjectContains || rule?.pattern || '').trim()
-
   // Bordes de palabra para evitar colisiones tipo "LOG Backup SD" matcheando
   // dentro de "LOG Backup SDB/TGT" (mismo criterio ya validado en el historico,
   // ver getJobExecutionsFromEmailHistory en graph.cjs).
@@ -70,7 +64,6 @@ function evaluateAs400Rule(rule, emails, inicio, fin, criticalityByJob) {
   const startMs = startDate.getTime()
   const endMs = fin instanceof Date ? fin.getTime() : new Date(fin).getTime()
   const tolerance = 24 * 60 * 60 * 1000
-
   const inWindow = (Array.isArray(emails) ? emails : [])
     .filter((m) => {
       const receivedMs = m?.receivedDateTime ? new Date(m.receivedDateTime).getTime() : NaN
@@ -83,27 +76,21 @@ function evaluateAs400Rule(rule, emails, inicio, fin, criticalityByJob) {
       return matchSender && (patternRegex ? patternRegex.test(text) : false)
     })
     .sort((a, b) => new Date(b.receivedDateTime).getTime() - new Date(a.receivedDateTime).getTime())
-
   const chosen = inWindow[0] || null
   let as400LogContent = null
   if (chosen && Array.isArray(chosen.attachments)) {
     const file = chosen.attachments.find((a) => a.name && a.name.toLowerCase().includes('qpquprfil'))
     if (file && file.contentBytes) as400LogContent = Buffer.from(file.contentBytes, 'base64').toString('latin1')
   }
-
   const parsedAs400 = as400LogContent ? parseAs400Attachment(as400LogContent) : null
-
   const finalDate = chosen?.receivedDateTime ? new Date(chosen.receivedDateTime) : null
   const realStartDate = parsedAs400?.startTime ? new Date(parsedAs400.startTime) : null
   const realEndDate = parsedAs400?.endTime ? new Date(parsedAs400.endTime) : finalDate
-
   let fStart = ''
   if (realStartDate && !Number.isNaN(realStartDate.getTime())) fStart = `${pad2(realStartDate.getHours())}:${pad2(realStartDate.getMinutes())}`
   let fEnd = ''
   if (realEndDate && !Number.isNaN(realEndDate.getTime())) fEnd = `${pad2(realEndDate.getHours())}:${pad2(realEndDate.getMinutes())}`
-
   const realDurationMs = parsedAs400?.durationMs ?? null
-
   return {
     jobId: `as400:${rule.id}`, jobName: rule.title || rule.name || `[AS400] ${pattern || rule.id}`,
     nextRun: startDate.toISOString(), lastRun: chosen?.receivedDateTime ?? null,
@@ -112,7 +99,12 @@ function evaluateAs400Rule(rule, emails, inicio, fin, criticalityByJob) {
     endTime: parsedAs400?.endTime ?? chosen?.receivedDateTime ?? null,
     startTimeDisplay: fStart, endTimeDisplay: fEnd,
     duration: realDurationMs ? formatDurationMs(realDurationMs) : '',
-    status: chosen ? 'success' : 'pending', as400LogContent,
+    status: chosen ? 'success' : 'pending',
+    // ✅ Contenido real del log para el modal del histórico. `logContent`
+    // es el nombre generico que ahora tambien usan VDC y Barracuda; se
+    // mantiene `as400LogContent` por compatibilidad con el frontend actual.
+    as400LogContent,
+    logContent: as400LogContent,
     reason: chosen ? 'Correo Recibido, revisar manualmente el log' : 'Pendiente Recepcion',
     durationMs: realDurationMs, durationTrend: null, relaunched: false,
     email: chosen ? { subject: chosen.subject, date: chosen.receivedDateTime } : null,
@@ -131,7 +123,6 @@ function computeVdcFixedStart(inicio, rule) {
   const key = String(rule?.title || '').trim().toUpperCase()
   const sched = VDC_FIXED_SCHEDULE[key]
   if (!sched) return null
-
   const start = inicio instanceof Date ? inicio : new Date(inicio)
   const candidate = new Date(start.getFullYear(), start.getMonth(), start.getDate(), sched.hh, sched.mm, 0, 0)
   if (candidate < start) candidate.setDate(candidate.getDate() + 1)
@@ -148,21 +139,23 @@ async function evaluateVdcRule(rule, emails, inicio, fin, cfg, criticalityByJob)
       return matchSender && matchSubject
     })
     .sort((a, b) => new Date(a.receivedDateTime).getTime() - new Date(b.receivedDateTime).getTime())
-
   const chosen = inWindow[0] || null
   let status = 'pending', reason = 'Pendiente Recepcion'
   let parsed = null
-
+  // ✅ Cuerpo real del correo, conservado para el modal de log del histórico.
+  // Antes se descargaba y parseaba (bodyContent) pero se descartaba sin
+  // adjuntarlo a la fila devuelta, por lo que el histórico por calendario
+  // nunca podía mostrar el contenido de VDC (aunque el dato sí existía).
+  let bodyContent = null
   if (chosen) {
     reason = 'Correo Recibido'
     try {
-      let bodyContent = await getMessageBody(cfg, chosen.id)
+      bodyContent = await getMessageBody(cfg, chosen.id)
       bodyContent = cleanVdcFooter(bodyContent)
       parsed = parseVdcBody(chosen, bodyContent)
     } catch (err) {
       parsed = null
     }
-
     if (parsed?.status) {
       status = parsed.status
     } else {
@@ -175,22 +168,18 @@ ${chosen.bodyPreview || ''}`.toLowerCase()
       else status = 'warning'
     }
   }
-
   const jobName = rule.title ? rule.title : `[VDC] ${rule.subjectContains || rule.sender || rule.id}`
   const fixedStart = computeVdcFixedStart(inicio, rule)
   const endDate = parsed?.endTime ? new Date(parsed.endTime) : (chosen?.receivedDateTime ? new Date(chosen.receivedDateTime) : null)
-
   let fStart = ''
   if (fixedStart && !Number.isNaN(fixedStart.getTime())) fStart = `${pad2(fixedStart.getHours())}:${pad2(fixedStart.getMinutes())}`
   let fEnd = ''
   if (endDate && !Number.isNaN(endDate.getTime())) fEnd = `${pad2(endDate.getHours())}:${pad2(endDate.getMinutes())}`
-
   let durationMs = null
   if (fixedStart && endDate && !Number.isNaN(fixedStart.getTime()) && !Number.isNaN(endDate.getTime())) {
     const diff = endDate.getTime() - fixedStart.getTime()
     durationMs = diff >= 0 ? diff : null
   }
-
   return {
     jobId: `vdc:${rule.id}`, jobName,
     nextRun: inicio.toISOString(), lastRun: chosen?.receivedDateTime ?? null,
@@ -205,6 +194,10 @@ ${chosen.bodyPreview || ''}`.toLowerCase()
     email: chosen ? { subject: chosen.subject, date: chosen.receivedDateTime } : null,
     allEmails: inWindow.map((e) => ({ subject: e.subject, date: e.receivedDateTime, status: buildVdcEmailStatus(rule, e) })),
     criticality: lookupCriticality(jobName, criticalityByJob), source: 'vdc', category: 'vdc', sender: rule.sender,
+    // ✅ Contenido real del correo (ya limpio de pie de firma) para el modal
+    // de log del histórico. Si no hay cuerpo completo, se guarda null; el
+    // frontend ya sabe mostrar "No hay contenido o no se pudo extraer."
+    logContent: bodyContent || null,
   }
 }
 
@@ -226,21 +219,21 @@ async function evaluateBarracudaRule(rule, emails, inicio, fin, cfg, criticality
       return matchSender && matchSubject
     })
     .sort((a, b) => new Date(b.receivedDateTime).getTime() - new Date(a.receivedDateTime).getTime())
-
   const chosen = inWindow[0] || null
   let status = 'pending', reason = 'Pendiente Recepcion'
   let parsed = null
-
+  // ✅ Cuerpo real del correo, conservado para el modal de log del histórico
+  // (ver comentario equivalente en evaluateVdcRule).
+  let bodyContent = null
   if (chosen) {
     reason = 'Correo Recibido'
     try {
-      let bodyContent = await getMessageBody(cfg, chosen.id)
+      bodyContent = await getMessageBody(cfg, chosen.id)
       bodyContent = cleanBarracudaFooter(bodyContent)
       parsed = parseBarracudaBody(bodyContent)
     } catch (err) {
       parsed = null
     }
-
     if (parsed?.status) {
       status = parsed.status
     } else {
@@ -252,17 +245,13 @@ async function evaluateBarracudaRule(rule, emails, inicio, fin, cfg, criticality
       else status = 'warning'
     }
   }
-
   const jobName = rule.title ? rule.title : `[BARRACUDA] ${rule.subjectContains || rule.sender || rule.id}`
-
   const startDate = parsed?.startTime ? new Date(parsed.startTime) : null
   const endDate = parsed?.endTime ? new Date(parsed.endTime) : (chosen?.receivedDateTime ? new Date(chosen.receivedDateTime) : null)
-
   let fStart = ''
   if (startDate && !Number.isNaN(startDate.getTime())) fStart = `${pad2(startDate.getHours())}:${pad2(startDate.getMinutes())}`
   let fEnd = ''
   if (endDate && !Number.isNaN(endDate.getTime())) fEnd = `${pad2(endDate.getHours())}:${pad2(endDate.getMinutes())}`
-
   return {
     jobId: `barracuda:${rule.id}`, jobName,
     nextRun: inicio.toISOString(), lastRun: chosen?.receivedDateTime ?? null,
@@ -277,6 +266,9 @@ async function evaluateBarracudaRule(rule, emails, inicio, fin, cfg, criticality
     email: chosen ? { subject: chosen.subject, date: chosen.receivedDateTime } : null,
     allEmails: inWindow.map((e) => ({ subject: e.subject, date: e.receivedDateTime, status: buildVdcEmailStatus(rule, e) })),
     criticality: lookupCriticality(jobName, criticalityByJob), source: 'barracuda', category: 'barracuda', sender: rule.sender,
+    // ✅ Contenido real del correo (ya limpio de pie de firma) para el modal
+    // de log del histórico.
+    logContent: bodyContent || null,
   }
 }
 
@@ -293,44 +285,41 @@ async function buildAs400Rows(rules, emails, inicio, fin, cfg, criticalityByJob 
     .filter((r) => { const p = String(r?.subjectContains || r?.pattern || '').trim(); return !!r?.enabled && !!p })
     .map((r) => evaluateAs400Rule(r, emails, inicio, fin, criticalityByJob))
     .filter(Boolean)
-
   await Promise.all(candidates.map(async (row) => {
     if (row.as400LogContent) return
     const chosenEmail = emails.find((m) => m.receivedDateTime === row.lastRun)
     if (!chosenEmail || !chosenEmail.hasAttachments || !chosenEmail.id) return
     const logContent = await fetchAs400Attachment(cfg, chosenEmail.id)
-    if (logContent) row.as400LogContent = logContent
+    if (logContent) {
+      row.as400LogContent = logContent
+      // ✅ Mantener sincronizado el campo generico `logContent` usado por
+      // el modal del histórico, igual que en VDC y Barracuda.
+      row.logContent = logContent
+    }
   }))
-
   // Reparsear tiempos reales (arrancado/finalizado) ahora que el log ya esta disponible.
   // Antes, evaluateAs400Rule solo tenia acceso a los adjuntos ya embebidos en la lista de
   // correos (normalmente sin contentBytes), por lo que startTime/endTime/durationMs quedaban
   // en null salvo que el adjunto ya viniera cargado.
   candidates.forEach((row) => {
     if (!row.as400LogContent) return
-
     const parsedAs400 = parseAs400Attachment(row.as400LogContent)
     if (!parsedAs400) return
-
     const realStartDate = parsedAs400.startTime ? new Date(parsedAs400.startTime) : null
     const realEndDate = parsedAs400.endTime ? new Date(parsedAs400.endTime) : null
-
     if (realStartDate && !Number.isNaN(realStartDate.getTime())) {
       row.startTime = parsedAs400.startTime
       row.startTimeDisplay = `${pad2(realStartDate.getHours())}:${pad2(realStartDate.getMinutes())}`
     }
-
     if (realEndDate && !Number.isNaN(realEndDate.getTime())) {
       row.endTime = parsedAs400.endTime
       row.endTimeDisplay = `${pad2(realEndDate.getHours())}:${pad2(realEndDate.getMinutes())}`
     }
-
     if (parsedAs400.durationMs != null) {
       row.durationMs = parsedAs400.durationMs
       row.duration = formatDurationMs(parsedAs400.durationMs)
     }
   })
-
   return candidates
 }
 

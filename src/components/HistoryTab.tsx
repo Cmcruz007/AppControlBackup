@@ -12,6 +12,46 @@ import HistoryCalendar from "./HistoryCalendar"
 import CommentEditor from "./CommentEditor"
 import EmailModal from "./EmailModal"
 
+function getHistoryLogContent(row: any): string | null {
+  const candidates = [
+    row?.logContent,
+    row?.as400LogContent,
+    row?.logText,
+    row?.emailLog,
+    row?.bodyContent,
+    row?.body,
+    row?.bodyPreview,
+  ]
+  for (const value of candidates) {
+    if (typeof value === "string" && value.trim()) return value
+  }
+  return null
+}
+
+function getHistoryLogTitle(jobName: string): string {
+  const clean = String(jobName || "Desconocido").trim()
+  if (/^backup\s+/i.test(clean)) return clean
+  if (/^vdc\s+/i.test(clean)) return `Backup ${clean}`
+  if (/^barracuda\s+/i.test(clean)) return `Backup ${clean}`
+  if (/^as400\s+/i.test(clean)) return `Backup ${clean}`
+  return clean
+}
+
+function getHistoryLogColor(jobName: string): string {
+  const normalized = String(jobName || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toUpperCase()
+
+  if (/SDB\s*[\/\-]?\s*TGT/.test(normalized)) return "#38bdf8"
+  if (/\bAS400\s+PR\b/.test(normalized) || /\bBACKUP\s+PR\b/.test(normalized)) return "#ff4d4f"
+  if (/\bAS400\s+RR\b/.test(normalized) || /\bBACKUP\s+RR\b/.test(normalized)) return "#ffd400"
+  if (/\bAS400\s+SD\b/.test(normalized) || /\bBACKUP\s+SD\b/.test(normalized)) return "#00ff00"
+  return "#00ff00"
+}
+
 async function handleExportScheduleExcel() {
   try {
     const res = await api().getSchedule30()
@@ -46,7 +86,7 @@ export default function HistoryTab({
   const [sortDir, setSortDir] = useState<SortDir>("asc")
   const [editingJobId, setEditingJobId] = useState<string | null>(null)
   const [emailModal, setEmailModal] = useState(false)
-  const [logModalData, setLogModalData] = useState<{ jobName: string; content: string | null } | null>(null)
+  const [logModalData, setLogModalData] = useState<{ jobName: string; title: string; content: string | null; color: string } | null>(null)
 
   useEffect(() => {
     setLoadingDays(true)
@@ -185,7 +225,15 @@ export default function HistoryTab({
               <button onClick={exportExcel} style={{ background: "#2563eb", color: "white" }}>Exportar</button>
             </div>
 
-            <JobTable rows={filtered} onEditComment={setEditingJobId} onOpenExecutions={onOpenExecutions} onOpenLog={(jobName) => { const row = histFull.find((r) => r.jobName === jobName); setLogModalData({ jobName, content: (row as any)?.as400LogContent ?? null }) }} sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+            <JobTable rows={filtered} onEditComment={setEditingJobId} onOpenExecutions={onOpenExecutions} onOpenLog={(jobName) => {
+              const row = histFull.find((r) => r.jobName === jobName) ?? histRows.find((r) => r.jobName === jobName)
+              setLogModalData({
+                jobName,
+                title: getHistoryLogTitle(jobName),
+                content: getHistoryLogContent(row),
+                color: getHistoryLogColor(jobName),
+              })
+            }} sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
           </>
         )}
       </div>
@@ -201,11 +249,11 @@ export default function HistoryTab({
         <div className="email-modal-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) setLogModalData(null) }} style={{ zIndex: 9999 }}>
           <div className="email-modal-panel" style={{ maxWidth: 900 }}>
             <div className="email-modal-header">
-              <h2>LOG AS/400 - {String(logModalData?.jobName || 'Desconocido')}</h2>
+              <h2>{String(logModalData?.title || logModalData?.jobName || "Desconocido")}</h2>
               <button className="email-modal-close" onClick={() => setLogModalData(null)}>×</button>
             </div>
             <div style={{ padding: 16, overflowY: 'auto', maxHeight: '65vh' }}>
-              <pre style={{ background: '#000', color: '#0f0', padding: 16, borderRadius: 6, fontFamily: 'monospace', fontSize: 13, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+              <pre style={{ background: '#000', color: logModalData?.color || '#00ff00', padding: 16, borderRadius: 6, fontFamily: 'monospace', fontSize: 13, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
                 {logModalData?.content ? String(logModalData.content) : 'No hay contenido o no se pudo extraer.'}
               </pre>
             </div>
