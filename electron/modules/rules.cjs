@@ -1,6 +1,6 @@
 // electron/modules/rules.cjs
 const { includesCI, pad2, lookupCriticality, formatDurationMs } = require('./utils.cjs')
-const { fetchAs400Attachment, getMessageBody, cleanBarracudaFooter, parseBarracudaBody, cleanVdcFooter, parseVdcBody, parseAs400Attachment } = require('./graph.cjs')
+const { fetchAs400Attachment, getMessageBody, cleanBarracudaFooter, parseBarracudaBody, cleanVdcFooter, parseVdcBody, parseAs400Attachment, extractVdcSummary } = require('./graph.cjs')
 
 function buildVdcEmailStatus(rule, email) {
   if (!email) return 'failed'
@@ -142,10 +142,8 @@ async function evaluateVdcRule(rule, emails, inicio, fin, cfg, criticalityByJob)
   const chosen = inWindow[0] || null
   let status = 'pending', reason = 'Pendiente Recepcion'
   let parsed = null
-  // ✅ Cuerpo real del correo, conservado para el modal de log del histórico.
-  // Antes se descargaba y parseaba (bodyContent) pero se descartaba sin
-  // adjuntarlo a la fila devuelta, por lo que el histórico por calendario
-  // nunca podía mostrar el contenido de VDC (aunque el dato sí existía).
+  // Cuerpo real del correo, usado solo internamente para extraer la frase
+  // util (ver extractVdcSummary); nunca se expone completo en el modal.
   let bodyContent = null
   if (chosen) {
     reason = 'Correo Recibido'
@@ -180,6 +178,12 @@ ${chosen.bodyPreview || ''}`.toLowerCase()
     const diff = endDate.getTime() - fixedStart.getTime()
     durationMs = diff >= 0 ? diff : null
   }
+  // ✅ Para el modal de log solo interesa la frase util del correo (ver
+  // extractVdcSummary en graph.cjs), nunca el cuerpo completo con enlaces
+  // de tracking, disclaimer legal, boton "View logs" y pie de firma. Si
+  // ningun patron conocido coincide, se conserva el cuerpo limpio como
+  // red de seguridad para no dejar el modal vacio.
+  const logContent = extractVdcSummary(bodyContent, chosen) || bodyContent || null
   return {
     jobId: `vdc:${rule.id}`, jobName,
     nextRun: inicio.toISOString(), lastRun: chosen?.receivedDateTime ?? null,
@@ -194,10 +198,9 @@ ${chosen.bodyPreview || ''}`.toLowerCase()
     email: chosen ? { subject: chosen.subject, date: chosen.receivedDateTime } : null,
     allEmails: inWindow.map((e) => ({ subject: e.subject, date: e.receivedDateTime, status: buildVdcEmailStatus(rule, e) })),
     criticality: lookupCriticality(jobName, criticalityByJob), source: 'vdc', category: 'vdc', sender: rule.sender,
-    // ✅ Contenido real del correo (ya limpio de pie de firma) para el modal
-    // de log del histórico. Si no hay cuerpo completo, se guarda null; el
-    // frontend ya sabe mostrar "No hay contenido o no se pudo extraer."
-    logContent: bodyContent || null,
+    // ✅ Frase util del correo (o cuerpo limpio si no se reconoce el patron)
+    // para el modal de log del histórico.
+    logContent,
   }
 }
 
@@ -222,8 +225,9 @@ async function evaluateBarracudaRule(rule, emails, inicio, fin, cfg, criticality
   const chosen = inWindow[0] || null
   let status = 'pending', reason = 'Pendiente Recepcion'
   let parsed = null
-  // ✅ Cuerpo real del correo, conservado para el modal de log del histórico
-  // (ver comentario equivalente en evaluateVdcRule).
+  // Cuerpo real del correo, conservado para el modal de log del histórico
+  // (Barracuda ya trae un log corto y util: Start/End/Duration/Result, sin
+  // el disclaimer largo de VDC, por lo que aqui se muestra completo).
   let bodyContent = null
   if (chosen) {
     reason = 'Correo Recibido'

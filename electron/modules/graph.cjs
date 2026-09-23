@@ -3,10 +3,8 @@ const { logGraphError, pad2 } = require('./utils.cjs')
 const { getOperationalWindow } = require('./engine.cjs')
 
 // ─── Limpieza de logs email ─────────────────────────────────────────────────
-
 function cleanBarracudaFooter(content) {
   if (!content) return content
-
   return String(content)
     .replace(/You can contact Barracuda Networks[\s\S]*$/i, '')
     .trim()
@@ -14,15 +12,56 @@ function cleanBarracudaFooter(content) {
 
 function cleanVdcFooter(content) {
   if (!content) return content
-
   return String(content)
     .replace(/Please view your backup logs for further details:\s*(<br\s*\/?>|\r?\n|\s)*View logs\s*(<br\s*\/?>|\r?\n|\s)*N?\s*$/i, '')
     .replace(/Please view your backup logs for further details:[\s\S]*$/i, '')
     .trim()
 }
 
-// ─── Token OAuth ────────────────────────────────────────────────────────────
+/**
+ * VDC — extrae UNICAMENTE la frase util del correo de Veeam Data Cloud,
+ * descartando cabecera grafica, enlaces de tracking, disclaimer legal,
+ * boton "View logs", seccion "Need assistance?", copyright y enlace de
+ * baja. El cuerpo completo de estos correos es enorme y no aporta nada
+ * operativo mas alla de esta frase (confirmado por Carlos con capturas
+ * reales del modal de log).
+ *
+ * Formatos conocidos (ver tambien parseVdcTimestamp):
+ *   NUEVO:   The "OneDrive" backup policy run for "Union de Creditos
+ *            Inmobiliarios EFC S.A" completed successfully on
+ *            September 23, 2026 at 00:52:44 UTC.
+ *   NUEVO (warning): The "Exchange Online" backup policy run for "..."
+ *            completed with warnings on September 10, 2026 at 01:43:42 UTC.
+ *   ANTIGUO: Backup run of the policy "Exchange Online" that finished on
+ *            Tue Aug 11 2026 23:45:01 UTC has completed with warning.
+ *
+ * Si ningun patron coincide, devuelve null para que el llamador pueda
+ * caer de vuelta al cuerpo completo (comportamiento anterior), evitando
+ * dejar el modal vacio ante un formato no previsto.
+ */
+function extractVdcSummary(bodyContent, message) {
+  const sources = [bodyContent, message?.bodyPreview]
+  for (const raw of sources) {
+    if (!raw) continue
+    const clean = String(raw)
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+    // Formato nuevo: The "X" backup policy run for "Y" completed ... UTC.
+    let m = clean.match(/The\s+"[^"]+"\s+backup policy run for\s+"[^"]+"\s+completed[^.]*?UTC\.?/i)
+    if (m) return m[0].trim()
+    // Variante corta usada en algunos asuntos/cuerpos: "X" policy run ... completed ... UTC.
+    m = clean.match(/"[^"]+"\s+policy run[^.]*?completed[^.]*?UTC\.?/i)
+    if (m) return m[0].trim()
+    // Formato antiguo: Backup run of the policy "X" ... finished on ... UTC has completed ...
+    m = clean.match(/Backup run of the policy\s+"[^"]+"[\s\S]*?UTC\s+has\s+completed[^.]*\.?/i)
+    if (m) return m[0].trim()
+  }
+  return null
+}
 
+// ─── Token OAuth ────────────────────────────────────────────────────────────
 async function getGraphToken(graphCfg) {
   const authUrl = `https://login.microsoftonline.com/${graphCfg.tenantId}/oauth2/v2.0/token`
   const body = new URLSearchParams({
@@ -31,43 +70,33 @@ async function getGraphToken(graphCfg) {
     scope: 'https://graph.microsoft.com/.default',
     grant_type: 'client_credentials',
   })
-
   const resAuth = await fetch(authUrl, { method: 'POST', body })
   const authJson = await resAuth.json()
-
   if (!resAuth.ok) {
     logGraphError('GRAPH_TOKEN_HTTP_ERROR', { status: resAuth.status, body: authJson })
     throw new Error(`Graph OAuth HTTP ${resAuth.status}: ${JSON.stringify(authJson)}`)
   }
-
   if (!authJson.access_token) {
     logGraphError('GRAPH_TOKEN_MISSING', { body: authJson })
     throw new Error(`No se pudo obtener token OAuth: ${JSON.stringify(authJson)}`)
   }
-
   return authJson.access_token
 }
 
 // ─── Listado de correos ─────────────────────────────────────────────────────
-
 async function getEmailsInRange(cfg, inicio, fin) {
   if (!cfg?.graph?.tenantId) throw new Error('Falta configuracion de Microsoft Graph (tenantId).')
-
   const g = cfg.graph
   const token = await getGraphToken(g)
-
   const filter = `receivedDateTime ge ${inicio.toISOString()} and receivedDateTime lt ${fin.toISOString()}`
-
   const params = new URLSearchParams({
     $filter: filter,
     $select: 'id,subject,receivedDateTime,bodyPreview,sender,from,hasAttachments',
     $top: '200',
     $orderby: 'receivedDateTime desc',
   })
-
   let nextUrl = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(g.mailbox)}/messages?${params.toString()}`
   const all = []
-
   while (nextUrl) {
     const resMail = await fetch(nextUrl, {
       headers: {
@@ -75,9 +104,7 @@ async function getEmailsInRange(cfg, inicio, fin) {
         Prefer: 'outlook.body-content-type="text"',
       },
     })
-
     const mailData = await resMail.json()
-
     if (!resMail.ok) {
       logGraphError('GRAPH_LIST_MESSAGES_HTTP_ERROR', {
         status: resMail.status,
@@ -88,13 +115,10 @@ async function getEmailsInRange(cfg, inicio, fin) {
       })
       throw new Error(`Graph list messages HTTP ${resMail.status}: ${JSON.stringify(mailData)}`)
     }
-
     all.push(...(mailData.value || []))
     nextUrl = mailData['@odata.nextLink'] || null
-
     if (all.length >= 2000) break
   }
-
   return all
 }
 
@@ -102,32 +126,25 @@ async function getEmails(cfg) {
   const hours = Math.max(1, Number(cfg?.graph?.sinceHours) || 24)
   const fin = new Date()
   const inicio = new Date(fin.getTime() - hours * 60 * 60 * 1000)
-
   return getEmailsInRange(cfg, inicio, fin)
 }
 
 // ─── Cuerpo completo de un mensaje ──────────────────────────────────────────
-
 async function getMessageBody(cfg, messageId) {
   if (!cfg?.graph?.tenantId || !messageId) return null
-
   try {
     const token = await getGraphToken(cfg.graph)
-
     const url = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(cfg.graph.mailbox)}/messages/${encodeURIComponent(messageId)}?$select=body,bodyPreview`
-
     const res = await fetch(url, {
       headers: {
         Authorization: `Bearer ${token}`,
         Prefer: 'outlook.body-content-type="text"',
       },
     })
-
     if (!res.ok) {
       logGraphError('GET_MESSAGE_BODY_ERROR', { status: res.status, messageId })
       return null
     }
-
     const data = await res.json()
     return data?.body?.content || data?.bodyPreview || null
   } catch (e) {
@@ -137,63 +154,46 @@ async function getMessageBody(cfg, messageId) {
 }
 
 // ─── Adjuntos AS400 ─────────────────────────────────────────────────────────
-
 async function fetchAs400Attachment(cfg, messageId) {
   if (!cfg?.graph?.tenantId || !messageId) return null
-
   try {
     const token = await getGraphToken(cfg.graph)
-
     const url = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(cfg.graph.mailbox)}/messages/${encodeURIComponent(messageId)}/attachments`
-
     const res = await fetch(url, {
       headers: { Authorization: `Bearer ${token}` },
     })
-
     if (!res.ok) {
       logGraphError('AS400_ATTACHMENT_ERROR', { status: res.status, messageId })
       return null
     }
-
     const data = await res.json()
     const attachments = data.value || []
-
     const file = attachments.find((a) => a.contentType && a.contentType.includes('text'))
       || attachments.find((a) => a.contentBytes)
-
     if (file && file.contentBytes) {
       return Buffer.from(file.contentBytes, 'base64').toString('latin1')
     }
   } catch (e) {
     logGraphError('AS400_ATTACHMENT_EXCEPTION', { message: e?.message, messageId })
   }
-
   return null
 }
 
 // ─── Envío de correos ───────────────────────────────────────────────────────
-
 async function sendGraphEmail(cfg, { to, cc, bcc, subject, bodyHtml }) {
   const g = cfg?.graph
   if (!g?.tenantId) throw new Error('Falta configuracion de Microsoft Graph.')
-
   const parseRecipients = (value) => {
     if (Array.isArray(value)) return value.map((x) => String(x).trim()).filter(Boolean)
     return String(value || '').split(';').map((x) => x.trim()).filter(Boolean)
   }
-
   const toList = parseRecipients(to)
   const ccList = parseRecipients(cc)
   const bccList = parseRecipients(bcc)
-
   if (!toList.length) throw new Error('No hay destinatarios validos en "Para".')
-
   const mapR = (list) => list.map((address) => ({ emailAddress: { address } }))
-
   const accessToken = await getGraphToken(g)
-
   const sendUrl = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(g.mailbox)}/sendMail`
-
   const res = await fetch(sendUrl, {
     method: 'POST',
     headers: {
@@ -210,7 +210,6 @@ async function sendGraphEmail(cfg, { to, cc, bcc, subject, bodyHtml }) {
       },
     }),
   })
-
   if (!res.ok) {
     const errBody = await res.text()
     logGraphError('GRAPH_SENDMAIL_HTTP_ERROR', {
@@ -220,23 +219,19 @@ async function sendGraphEmail(cfg, { to, cc, bcc, subject, bodyHtml }) {
     })
     throw new Error(`Graph sendMail HTTP ${res.status}: ${errBody}`)
   }
-
   return true
 }
 
 // ─── PARSERS por tipo de fuente ─────────────────────────────────────────────
-
 function detectRuleSource(rule) {
   const id = String(rule?.id || '').toLowerCase()
   const title = String(rule?.title || '').toLowerCase()
   const sender = String(rule?.sender || '').toLowerCase()
-
   if (id.startsWith('as400') || sender.includes('qsysopr')) return 'as400'
   if (id.startsWith('barra') || sender.includes('barracuda')) return 'barracuda'
   if (id.startsWith('vdc') || sender.includes('veeam')) return 'vdc'
   if (title.includes('barracuda')) return 'barracuda'
   if (title.includes('veeam data cloud') || title.includes('vdc')) return 'vdc'
-
   return 'unknown'
 }
 
@@ -250,14 +245,11 @@ function detectRuleSource(rule) {
  */
 function parseAs400Attachment(text) {
   if (!text) return null
-
   const startMatch = text.match(/arrancado\s+el\s+(\d{2})\/(\d{2})\/(\d{2})\s+a\s+las\s+(\d{2}):(\d{2}):(\d{2})/i)
   const endMatch = text.match(/finalizado\s+el\s+(\d{2})\/(\d{2})\/(\d{2})\s+a\s+las\s+(\d{2}):(\d{2}):(\d{2})[\s\S]*?c[oó]digo\s+de\s+finalizaci[oó]n\s+(\d+)/i)
-
   const parseDate = (yy, mm, dd, hh, mi, ss) => {
     const y = parseInt(yy, 10)
     const year = y < 90 ? 2000 + y : 1900 + y
-
     return new Date(
       year,
       parseInt(mm, 10) - 1,
@@ -267,13 +259,11 @@ function parseAs400Attachment(text) {
       parseInt(ss, 10),
     )
   }
-
   let startTime = null
   let endTime = null
   let durationMs = null
   let status = null
   let code = null
-
   if (startMatch) {
     startTime = parseDate(
       startMatch[1],
@@ -284,7 +274,6 @@ function parseAs400Attachment(text) {
       startMatch[6],
     )
   }
-
   if (endMatch) {
     endTime = parseDate(
       endMatch[1],
@@ -297,15 +286,12 @@ function parseAs400Attachment(text) {
     code = parseInt(endMatch[7], 10)
     status = code === 0 ? 'success' : 'failed'
   }
-
   // Duración = tiempo entre arranque y finalización (reloj real).
   // Nunca se usa el campo "se utilizaron N segundos" del AS400.
   if (startTime && endTime) {
     durationMs = endTime.getTime() - startTime.getTime()
   }
-
   if (!startTime && !endTime && !status) return null
-
   return {
     startTime: startTime ? startTime.toISOString() : null,
     endTime: endTime ? endTime.toISOString() : null,
@@ -324,13 +310,11 @@ function parseAs400Attachment(text) {
  */
 function parseBarracudaBody(body) {
   if (!body) return null
-
   const clean = String(body)
     .replace(/<[^>]+>/g, ' ')
     .replace(/&nbsp;/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
-
   const startMatch = clean.match(/Start\s+Date\s+(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})\s+UTC/i)
   const endMatch = clean.match(/End\s+Date\s+(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})\s+UTC/i)
   const durationMatch = clean.match(/Duration\s+(\d{2}):(\d{2}):(\d{2})/i)
@@ -339,40 +323,32 @@ function parseBarracudaBody(body) {
   const resultMatch = clean.match(/Result\s+(Success|Warning|Failed|Failure)/i)
   const sizeMatch = clean.match(/Size\s+([\d.]+)\s*(KiB|MiB|GiB|TiB)/i)
   const itemMatch = clean.match(/Item\s+Count\s+([\d,]+)/i)
-
   let startTime = null
   let endTime = null
   let durationMs = null
   let status = null
-
   if (startMatch) startTime = new Date(`${startMatch[1]}T${startMatch[2]}Z`)
   if (endMatch) endTime = new Date(`${endMatch[1]}T${endMatch[2]}Z`)
-
   if (durationMatch) {
     const h = parseInt(durationMatch[1], 10)
     const m = parseInt(durationMatch[2], 10)
     const s = parseInt(durationMatch[3], 10)
     durationMs = (h * 3600 + m * 60 + s) * 1000
   }
-
   if (!durationMs && startTime && endTime) {
     durationMs = endTime.getTime() - startTime.getTime()
   }
-
   if (resultMatch) {
     const r = resultMatch[1].toLowerCase()
     status = r === 'success' ? 'success' : (r === 'warning' ? 'warning' : 'failed')
   } else {
     const errors = errorMatch ? parseInt(errorMatch[1], 10) : 0
     const warnings = warningMatch ? parseInt(warningMatch[1], 10) : 0
-
     if (errors > 0) status = 'failed'
     else if (warnings > 0) status = 'warning'
     else status = 'success'
   }
-
   if (!startTime && !endTime && !status) return null
-
   return {
     startTime: startTime ? startTime.toISOString() : null,
     endTime: endTime ? endTime.toISOString() : null,
@@ -391,7 +367,6 @@ function buildVdcUtcDate(monthName, day, year, hh, mi, ss) {
   const monthKey = String(monthName).slice(0, 3).toLowerCase()
   const month = VDC_MONTHS[monthKey]
   if (month === undefined) return null
-
   return new Date(Date.UTC(
     parseInt(year, 10),
     month,
@@ -433,7 +408,6 @@ function parseVdcTimestamp(clean) {
       newFormatMatch[4], newFormatMatch[5], newFormatMatch[6],
     )
   }
-
   const oldFormatMatch = clean.match(
     /on\s+\w+\s+([A-Za-z]+)\s+(\d{1,2})\s+(\d{4})\s+(\d{2}):(\d{2}):(\d{2})\s+UTC/i
   )
@@ -443,7 +417,6 @@ function parseVdcTimestamp(clean) {
       oldFormatMatch[4], oldFormatMatch[5], oldFormatMatch[6],
     )
   }
-
   return null
 }
 
@@ -499,24 +472,20 @@ function parseVdcBody(message, bodyContent = '') {
     .replace(/&nbsp;/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
-
   const cleanPreview = String(message?.bodyPreview || '')
     .replace(/<[^>]+>/g, ' ')
     .replace(/&nbsp;/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
-
   const lowerClean = clean.toLowerCase()
   const subjectPreview = `${message?.subject || ''} ${message?.bodyPreview || ''}`.toLowerCase()
   const fullText = `${subjectPreview} ${lowerClean}`
-
   // Orden de comprobacion: de mas especifico a menos especifico. En cuanto
   // una frase completa ("completed successfully/with warning(s)/with
   // error(s)") coincide, se fija el estado y no se sigue evaluando -- así
   // el disclaimer generico ("warning and error messages...") nunca llega
   // a ser el que decide el estado.
   let status = null
-
   if (/completed\s+successfully/i.test(fullText)) {
     status = 'success'
   } else if (/completed\s+with\s+warnings?\b/i.test(fullText)) {
@@ -527,14 +496,12 @@ function parseVdcBody(message, bodyContent = '') {
   // Si ninguna frase coincide, status queda en null y el llamador
   // (getJobExecutionsFromEmailHistory) cae al fallback generico basado en
   // successWord/errorWord de la regla (inferExecutionStatusFromRule).
-
   // FIX 4: primero se intenta con el cuerpo completo; si no hay match, se
   // reintenta con bodyPreview como red de seguridad (ver comentario arriba).
   let endTime = parseVdcTimestamp(clean)
   if (!endTime && cleanPreview) {
     endTime = parseVdcTimestamp(cleanPreview)
   }
-
   return {
     // Se rellena en getJobExecutionsFromEmailHistory via computeVdcFixedStart.
     startTime: null,
@@ -573,13 +540,10 @@ const VDC_FIXED_SCHEDULE = [
  */
 function computeVdcFixedStart(jobName, endTime) {
   if (!endTime || Number.isNaN(endTime.getTime())) return null
-
   const rule = VDC_FIXED_SCHEDULE.find((r) => r.match.test(jobName || ''))
   if (!rule) return null
-
   const { inicio } = getOperationalWindow(endTime)
   const start = new Date(inicio.getTime() + rule.offsetMinutes * 60000)
-
   // Salvaguarda: si el inicio calculado quedara despues del fin real (no
   // deberia pasar con estos offsets salvo que el "end" usado no sea el de
   // la ejecucion original, p.ej. por un correo de relanzamiento del mismo
@@ -587,7 +551,6 @@ function computeVdcFixedStart(jobName, endTime) {
   // getJobExecutionsFromEmailHistory), no lo usamos para evitar
   // duraciones negativas o incoherentes.
   if (start.getTime() >= endTime.getTime()) return null
-
   return start
 }
 
@@ -630,30 +593,24 @@ function getWindowKey(date) {
  */
 function keepFirstEmailPerWindow(emails) {
   const firstOfWindow = new Map()
-
   for (const m of emails) {
     const received = m?.receivedDateTime ? new Date(m.receivedDateTime) : null
     if (!received || Number.isNaN(received.getTime())) continue
-
     const key = getWindowKey(received)
     const current = firstOfWindow.get(key)
-
     if (!current || received.getTime() < new Date(current.receivedDateTime).getTime()) {
       firstOfWindow.set(key, m)
     }
   }
-
   return [...firstOfWindow.values()].sort(
     (a, b) => new Date(b.receivedDateTime).getTime() - new Date(a.receivedDateTime).getTime()
   )
 }
-
 // Alias retrocompatible: el nombre anterior de esta funcion (usado en
 // versiones previas de este fichero) agrupaba por dia calendario natural.
 // Se mantiene el nombre exportado por si algun otro modulo lo referencia,
 // pero ahora usa agrupacion por ventana operacional (mas correcta).
 const keepFirstEmailPerDayVdc = keepFirstEmailPerWindow
-
 
 /**
  * AS400: selecciona la mejor ejecucion de cada ventana DESPUES de analizar
@@ -678,7 +635,6 @@ const keepFirstEmailPerDayVdc = keepFirstEmailPerWindow
  */
 function keepBestExecutionPerWindow(executions) {
   const bestOfWindow = new Map()
-
   const quality = (execution) => {
     let score = 0
     if (execution?.parsed) score += 100
@@ -688,29 +644,23 @@ function keepBestExecutionPerWindow(executions) {
     if (execution?.hasLog) score += 5
     return score
   }
-
   for (const execution of executions) {
     const raw = execution?.start || execution?.end || execution?.date
     if (!raw) continue
-
     const date = new Date(raw)
     if (Number.isNaN(date.getTime())) continue
-
     const key = getWindowKey(date)
     const current = bestOfWindow.get(key)
-
     if (!current || quality(execution) > quality(current)) {
       bestOfWindow.set(key, execution)
       continue
     }
-
     if (quality(execution) === quality(current)) {
       const currentTime = new Date(current?.start || current?.end || current?.date || 0).getTime()
       const executionTime = new Date(execution?.start || execution?.end || execution?.date || 0).getTime()
       if (executionTime < currentTime) bestOfWindow.set(key, execution)
     }
   }
-
   return [...bestOfWindow.values()].sort(
     (a, b) => new Date(b.start || b.end || b.date || 0).getTime() - new Date(a.start || a.end || a.date || 0).getTime()
   )
@@ -718,7 +668,6 @@ function keepBestExecutionPerWindow(executions) {
 
 function keepBestAs400ExecutionPerWindow(executions) {
   const bestOfWindow = new Map()
-
   const quality = (execution) => {
     let score = 0
     if (execution?.parsed) score += 100
@@ -728,30 +677,24 @@ function keepBestAs400ExecutionPerWindow(executions) {
     if (execution?.hasLog) score += 5
     return score
   }
-
   for (const execution of executions) {
     // Para AS400 solo aceptamos como ejecucion real un adjunto parseado.
     // `start` contiene entonces la fecha/hora real de arranque del trabajo.
     if (!execution?.parsed || !execution?.start) continue
-
     const start = new Date(execution.start)
     if (Number.isNaN(start.getTime())) continue
-
     const key = getWindowKey(start)
     const current = bestOfWindow.get(key)
-
     if (!current || quality(execution) > quality(current)) {
       bestOfWindow.set(key, execution)
       continue
     }
-
     if (quality(execution) === quality(current)) {
       const currentTime = new Date(current.start || current.end || 0).getTime()
       const executionTime = new Date(execution.start || execution.end || 0).getTime()
       if (executionTime > currentTime) bestOfWindow.set(key, execution)
     }
   }
-
   return [...bestOfWindow.values()].sort(
     (a, b) => new Date(b.start || b.end || 0).getTime() - new Date(a.start || a.end || 0).getTime()
   )
@@ -782,106 +725,84 @@ function keepBestAs400ExecutionPerWindow(executions) {
  */
 function fillMissingWindows(executions, limit, ruleSource = 'unknown') {
   const maxWindows = Math.max(1, Math.min(500, Number(limit) || 30))
-
   const presentKeys = new Set(
     executions
       .map((e) => {
         const raw = e?.start || e?.end
         if (!raw) return null
-
         const d = new Date(raw)
         if (Number.isNaN(d.getTime())) return null
-
         return getWindowKey(d)
       })
       .filter(Boolean)
   )
-
   // Inicio exacto de la ventana operacional que contiene el instante
   // actual. Cada ventana anterior se obtiene restando bloques de 24 horas.
   const anchorStart = getOperationalWindow(new Date()).inicio
   const missingRows = []
-
   for (let i = 0; i < maxWindows; i++) {
     const windowStart = new Date(
       anchorStart.getTime() - i * 24 * 60 * 60 * 1000
     )
-
     const windowEnd = new Date(
       windowStart.getTime() + 24 * 60 * 60 * 1000
     )
-
     const key = windowStart.toISOString()
-
     if (presentKeys.has(key)) continue
-
     // AS400 pertenece al dia en el que comienza la ventana.
     // VDC y Barracuda mantienen el criterio existente basado en el final
     // de la ventana operacional.
     const displayDate = ruleSource === 'as400'
       ? windowStart
       : windowEnd
-
     missingRows.push({
       id: `missing-${key}`,
-
       start: null,
       end: null,
       duration: null,
       date: displayDate.toISOString(),
-
       status: 'missing',
       result: 'missing',
       reason: 'Sin ejecución en la ventana operacional (24h)',
-
       source: 'email',
       subject: '',
       bodyPreview: '',
       hasAttachments: false,
-
       as400LogContent: null,
       logContent: null,
       logText: null,
       emailLog: null,
       body: null,
       bodyContent: null,
-
       hasLog: false,
       logAvailable: false,
       hasEmailLog: false,
       emailLogAvailable: false,
       canOpenLog: false,
       logIcon: false,
-
       size: null,
       items: null,
-
       parserSource: ruleSource,
       parsed: false,
     })
   }
-
   const merged = [...executions, ...missingRows]
-
   merged.sort((a, b) => {
     const ta = new Date(
       a?.start || a?.end || a?.date || 0
     ).getTime()
-
     const tb = new Date(
       b?.start || b?.end || b?.date || 0
     ).getTime()
-
     return tb - ta
   })
-
   return merged.slice(0, maxWindows)
-}// Alias retrocompatible (nombre anterior, cuando solo se aplicaba a
+}
+// Alias retrocompatible (nombre anterior, cuando solo se aplicaba a
 // Barracuda). Se mantiene por si algun otro modulo lo referencia.
 const fillMissingBarracudaWindows = fillMissingWindows
 
 // ─── Status fallback (cuando el parser no devuelve nada) ────────────────────
-
 function normalizeText(value) {
   return String(value || '').toLowerCase()
 }
@@ -890,24 +811,19 @@ function inferExecutionStatusFromRule(message, rule) {
   const haystack = `${message?.subject || ''} ${message?.bodyPreview || ''}`.toLowerCase()
   const successWord = normalizeText(rule?.successWord || rule?.successKeywords)
   const errorWord = normalizeText(rule?.errorWord || rule?.errorKeywords)
-
   if (errorWord && haystack.includes(errorWord)) {
     return { status: 'failed', reason: 'Correo recibido (error detectado)' }
   }
-
   if (successWord && haystack.includes(successWord)) {
     return { status: 'success', reason: 'Correo recibido (éxito detectado)' }
   }
-
   if (String(rule?.id || '').toLowerCase().startsWith('as400') || message?.hasAttachments) {
     return { status: 'success', reason: 'Correo recibido' }
   }
-
   return { status: 'pending', reason: 'Correo recibido' }
 }
 
 // ─── Matching de asunto (subject) ───────────────────────────────────────────
-
 // Escape para regex
 function escapeRegex(s) {
   return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -942,7 +858,6 @@ function escapeRegex(s) {
  */
 function buildSubjectTokenRegexes(subjectRule) {
   if (!subjectRule) return []
-
   return String(subjectRule)
     .split(/\s+/)
     .filter(Boolean)
@@ -955,22 +870,16 @@ function subjectMatchesAllTokens(subject, tokenRegexes) {
 }
 
 // ─── Histórico de ejecuciones desde correos ─────────────────────────────────
-
 async function getJobExecutionsFromEmailHistory(cfg, rule, jobName, limit = 200, sinceDays = 60) {
   if (!cfg?.graph?.tenantId) {
     return { ok: false, error: 'Falta configuración de Microsoft Graph.', executions: [] }
   }
-
   const fin = new Date()
   const inicio = new Date(fin.getTime() - (Number(sinceDays) || 60) * 24 * 60 * 60 * 1000)
-
   const allEmails = await getEmailsInRange(cfg, inicio, fin)
-
   const senderRule = normalizeText(rule?.sender)
-
   // Detectamos la fuente ANTES de construir subjectRule para poder usarla.
   const ruleSource = detectRuleSource(rule)
-
   // Para Barracuda, si no hay subjectContains explícito, deducimos el servicio
   // (SharePoint / OneDrive / Exchange / Teams) desde el nombre del job.
   const extractBarracudaService = (name) => {
@@ -981,11 +890,9 @@ async function getJobExecutionsFromEmailHistory(cfg, rule, jobName, limit = 200,
     if (/teams/.test(n))      return 'Teams'
     return null
   }
-
   const barracudaService = (ruleSource === 'barracuda')
     ? extractBarracudaService(jobName)
     : null
-
   const subjectRule = normalizeText(
     rule?.subjectContains ||
     barracudaService ||
@@ -993,21 +900,18 @@ async function getJobExecutionsFromEmailHistory(cfg, rule, jobName, limit = 200,
     rule?.name ||
     jobName
   )
-
   // Ver comentario detallado en buildSubjectTokenRegexes(): en vez de un
   // unico regex que exige el string completo en un orden fijo, usamos
   // varios regex (uno por palabra) y exigimos que TODOS matcheen, en
   // cualquier orden. Esto es lo que corrige el problema de VDC con el
   // cambio de formato de asunto de Veeam Data Cloud (19/08/2026).
   const subjectTokenRegexes = buildSubjectTokenRegexes(subjectRule)
-
   const matchedEmails = (Array.isArray(allEmails) ? allEmails : [])
     .filter((m) => {
       const fromAddr = normalizeText(m?.from?.emailAddress?.address)
       const senderAddr = normalizeText(m?.sender?.emailAddress?.address)
       const sender = senderAddr || fromAddr
       const subject = normalizeText(m?.subject)
-
       const senderOk =
         !senderRule ||
         !sender ||
@@ -1015,17 +919,14 @@ async function getJobExecutionsFromEmailHistory(cfg, rule, jobName, limit = 200,
         senderRule.includes(sender) ||
         fromAddr.includes(senderRule) ||
         senderRule.includes(fromAddr)
-
       // Matching estricto por palabras sueltas (ver buildSubjectTokenRegexes):
       // SIEMPRE exige que todos los tokens del filtro esten presentes en el
       // asunto, en cualquier orden. Ya no hay fallback laxo tipo
       // (isBarracuda && /backup\s+report/i).
       const subjectOk = subjectMatchesAllTokens(subject, subjectTokenRegexes)
-
       return senderOk && subjectOk
     })
     .sort((a, b) => new Date(b.receivedDateTime).getTime() - new Date(a.receivedDateTime).getTime())
-
   // Para VDC, Barracuda y AS400: nos quedamos solo con el primer correo de
   // cada VENTANA OPERACIONAL de 24h (la ejecucion real; el resto de
   // correos de esa misma ventana son reintentos/relanzamientos que se
@@ -1046,28 +947,22 @@ async function getJobExecutionsFromEmailHistory(cfg, rule, jobName, limit = 200,
   const preLimitEmails = (ruleSource === 'vdc' || ruleSource === 'barracuda')
     ? keepFirstEmailPerWindow(matchedEmails)
     : matchedEmails
-
   // En AS400, `limit` es el numero final de ventanas del historial, no el
   // numero de correos candidatos. El recorte se aplica despues del parseo.
   const filtered = ruleSource === 'as400'
     ? preLimitEmails
     : preLimitEmails.slice(0, Number(limit) || 200)
-
   // Procesar en paralelo controlado
   const executions = []
   const concurrency = 8
-
   for (let i = 0; i < filtered.length; i += concurrency) {
     const batch = filtered.slice(i, i + concurrency)
-
     const batchResults = await Promise.all(batch.map(async (m, idx) => {
       const baseIndex = i + idx
-
       let parsed = null
       let as400LogContent = null
       let logContent = null
       let bodyContent = null
-
       try {
         if (ruleSource === 'as400') {
           as400LogContent = await fetchAs400Attachment(cfg, m.id)
@@ -1087,14 +982,12 @@ async function getJobExecutionsFromEmailHistory(cfg, rule, jobName, limit = 200,
           const fullBody = await getMessageBody(cfg, m.id)
           const rawBody = fullBody || m?.bodyPreview || ''
           bodyContent = cleanVdcFooter(rawBody)
-          logContent = bodyContent || m?.bodyPreview || null
-          // FIX: antes se llamaba parseVdcBody(m) sin bodyContent, por lo
-          // que endTime siempre salia null (ver comentario en parseVdcBody).
-          // FIX 4: parseVdcBody ahora tambien recibe el mensaje completo
-          // para poder usar message.bodyPreview como fallback si
-          // bodyContent no permite extraer la fecha.
           parsed = parseVdcBody(m, bodyContent || m?.bodyPreview || '')
-
+          // ✅ Para el modal de log solo interesa la frase util del correo
+          // (ver extractVdcSummary), nunca el cuerpo completo con enlaces,
+          // disclaimer y pie de firma. Si ningun patron conocido coincide,
+          // se conserva el cuerpo limpio como red de seguridad.
+          logContent = extractVdcSummary(bodyContent, m) || bodyContent || m?.bodyPreview || null
           // El correo de VDC solo trae la hora de FIN. El INICIO es fijo
           // por tipo de backup (ver VDC_FIXED_SCHEDULE / computeVdcFixedStart
           // mas arriba), confirmado contra el portal de Veeam Data Cloud.
@@ -1124,33 +1017,25 @@ async function getJobExecutionsFromEmailHistory(cfg, rule, jobName, limit = 200,
           error: err?.message || String(err),
         })
       }
-
       const inferred = inferExecutionStatusFromRule(m, rule)
       const status = parsed?.status || inferred.status
-
       const hasLogContent = Boolean(logContent || as400LogContent || bodyContent)
-
       return {
         id: m.id || `mail-${baseIndex}`,
-
         start: parsed?.startTime || m.receivedDateTime || null,
         end: parsed?.endTime || m.receivedDateTime || null,
         duration: parsed?.durationMs ?? null,
-
         status,
         result: status,
-
         reason: parsed?.code === 0
           ? 'Backup correcto'
           : parsed?.code != null
             ? `Código finalización: ${parsed.code}`
             : inferred.reason,
-
         source: 'email',
         subject: m.subject || '',
         bodyPreview: m.bodyPreview || '',
         hasAttachments: !!m.hasAttachments,
-
         // ✅ Contenido real para modal de log
         as400LogContent: as400LogContent || null,
         logContent: logContent || null,
@@ -1158,7 +1043,6 @@ async function getJobExecutionsFromEmailHistory(cfg, rule, jobName, limit = 200,
         emailLog: logContent || null,
         body: bodyContent || null,
         bodyContent: bodyContent || null,
-
         // ✅ Flags para frontend
         hasLog: hasLogContent,
         logAvailable: hasLogContent,
@@ -1166,20 +1050,16 @@ async function getJobExecutionsFromEmailHistory(cfg, rule, jobName, limit = 200,
         emailLogAvailable: hasLogContent,
         canOpenLog: hasLogContent,
         logIcon: hasLogContent,
-
         // Extras Barracuda
         size: parsed?.size || null,
         items: parsed?.items || null,
-
         // Meta
         parserSource: ruleSource,
         parsed: !!parsed,
       }
     }))
-
     executions.push(...batchResults)
   }
-
   // Deduplicado por dia de ejecucion real (AS400 en concreto puede recibir mas
   // de un correo con el mismo asunto/remitente para la misma ejecucion, p.ej. un
   // segundo correo 'Log Backup RR' cuyo adjunto no trae el patron esperado y no
@@ -1197,28 +1077,21 @@ async function getJobExecutionsFromEmailHistory(cfg, rule, jobName, limit = 200,
     if (Number.isNaN(d.getTime())) return null
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
   }
-
   const bestByDay = new Map()
-
   for (const execution of executions) {
     const dayKey = getDayKey(execution)
-
     if (!dayKey) {
       // Sin fecha valida: lo dejamos pasar tal cual, con clave unica por id.
       bestByDay.set(`no-date:${execution.id}`, execution)
       continue
     }
-
     const current = bestByDay.get(dayKey)
-
     if (!current) {
       bestByDay.set(dayKey, execution)
       continue
     }
-
     const currentParsed = !!current.parsed
     const executionParsed = !!execution.parsed
-
     if (executionParsed && !currentParsed) {
       bestByDay.set(dayKey, execution)
     } else if (executionParsed === currentParsed) {
@@ -1228,7 +1101,6 @@ async function getJobExecutionsFromEmailHistory(cfg, rule, jobName, limit = 200,
     }
     // Si current ya esta parseado y execution no, se ignora execution (se descarta el fantasma).
   }
-
   // VDC, Barracuda y AS400 se deduplican por VENTANA OPERACIONAL.
   // No usamos bestByDay para estas fuentes: el dia calendario puede mezclar
   // dos ventanas distintas y eliminar una ejecucion valida antes de rellenar
@@ -1243,7 +1115,6 @@ async function getJobExecutionsFromEmailHistory(cfg, rule, jobName, limit = 200,
     dedupedExecutions = [...bestByDay.values()]
       .sort((a, b) => new Date(b.start || b.end || 0).getTime() - new Date(a.start || a.end || 0).getTime())
   }
-
   // FIX (confirmado por Carlos, objetivo: 30 ultimas ejecuciones para VDC,
   // Barracuda y AS400): VDC/Barracuda/AS400 pueden tener ventanas
   // operacionales de 24h sin ninguna ejecucion real. Rellenamos esas
@@ -1259,7 +1130,6 @@ async function getJobExecutionsFromEmailHistory(cfg, rule, jobName, limit = 200,
       ruleSource
     )
   }
-
   return {
     ok: true,
     jobName: jobName || rule?.title || rule?.name || 'Job email',
@@ -1276,7 +1146,6 @@ module.exports = {
   fetchAs400Attachment,
   sendGraphEmail,
   getJobExecutionsFromEmailHistory,
-
   // Parsers exportados por si quieres testearlos
   parseAs400Attachment,
   parseBarracudaBody,
@@ -1292,8 +1161,9 @@ module.exports = {
   detectRuleSource,
   buildSubjectTokenRegexes,
   subjectMatchesAllTokens,
-
   // Limpieza logs
   cleanBarracudaFooter,
   cleanVdcFooter,
+  // ✅ Resumen util del correo VDC (nuevo)
+  extractVdcSummary,
 }
