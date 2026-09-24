@@ -1,12 +1,11 @@
+
 const { buildEmailHtml } = require('./electron/modules/emailBuilder.cjs')
 const proxyUrl = process.env.HTTPS_PROXY || process.env.HTTP_PROXY
-
 const express = require('express')
 const path = require('path')
 const fs = require('fs')
 const https = require('https')
 const http = require('http')
-
 const { logGraphError } = require('./electron/modules/utils.cjs')
 const { verifyEntraToken } = require('./electron/modules/entraAuth.cjs')
 const { loadConfig, saveConfig, isElectron } = require('./electron/modules/config.cjs')
@@ -19,14 +18,12 @@ const {
   sqlGetScheduleJobs,
   sqlListJobs,
 } = require('./electron/modules/sql.cjs')
-
 const {
   getEmails,
   getEmailsInRange,
   sendGraphEmail,
   getJobExecutionsFromEmailHistory,
 } = require('./electron/modules/graph.cjs')
-
 const {
   parseScheduleXml,
   expandSchedule30,
@@ -35,37 +32,29 @@ const {
   findParentJobForCopy,
   buildPrimaryJobIndex,
 } = require('./electron/modules/schedule.cjs')
-
 const {
   getOperationalWindow,
   processSessions,
   applyManualOverride,
 } = require('./electron/modules/engine.cjs')
-
 const {
   buildVdcRows,
   buildBarracudaRows,
   buildAs400Rows,
 } = require('./electron/modules/rules.cjs')
-
 // ─── Proxy corporativo ──────────────────────────────────────────────────────
-
 if (proxyUrl) {
   const { setGlobalDispatcher, ProxyAgent } = require('undici')
   setGlobalDispatcher(new ProxyAgent(proxyUrl))
   console.log('[PROXY] Configurado:', proxyUrl)
 }
-
 // ─── Configuración ──────────────────────────────────────────────────────────
-
 const PORT = Number(process.env.BM_PORT) || 3100
 const AUTH_TOKEN = process.env.BM_AUTH_TOKEN || ''
-
 const HTTPS_PORT = Number(process.env.BM_HTTPS_PORT) || 443
 const HTTP_REDIRECT_PORT = Number(process.env.BM_HTTP_PORT) || 80
 const pfxPath = process.env.BM_PFX_PATH || path.join(__dirname, 'Certificado', 'DASHBOARD.pfx')
 const pfxPassword = process.env.BM_PFX_PASSWORD || ''
-
 // ─── Profundidad del historial de ejecuciones (modal de Backups) ────────────
 // Jobs alimentados por correo (VDC / Barracuda / AS400): ventana de 30 ejecuciones.
 // Jobs de VB&R (Veeam Backup & Replication, origen SQL): ventana de 90 ejecuciones.
@@ -73,30 +62,23 @@ const HISTORY_LIMIT_EMAIL_JOBS = Number(process.env.BM_HISTORY_LIMIT_EMAIL) || 3
 const HISTORY_LIMIT_VBR_JOBS = Number(process.env.BM_HISTORY_LIMIT_VBR) || 90
 // Días de correo hacia atrás que se rastrean para reconstruir las 30 ejecuciones.
 const HISTORY_EMAIL_LOOKBACK_DAYS = Number(process.env.BM_HISTORY_EMAIL_DAYS) || 90
-
 if (!AUTH_TOKEN) {
   console.warn('⚠️  BM_AUTH_TOKEN no definido. La API NO tiene autenticacion por token clásico.')
   console.warn('   En producción debe existir BM_AUTH_TOKEN o validación Entra ID activa.')
 }
-
 // ─── Estado global ──────────────────────────────────────────────────────────
-
 let lastPayload = null
 let lastRefreshTime = null
 let refreshIntervalId = null
-
 let dailyReportRunning = false
 const dailyReportMarkerPath = path.join(__dirname, 'daily-report-last-sent.txt')
-
 // ─── Utilidades ─────────────────────────────────────────────────────────────
-
 function getLocalDateKey(d = new Date()) {
   const yyyy = d.getFullYear()
   const mm = String(d.getMonth() + 1).padStart(2, '0')
   const dd = String(d.getDate()).padStart(2, '0')
   return `${yyyy}-${mm}-${dd}`
 }
-
 function getLastDailyReportDate() {
   try {
     if (!fs.existsSync(dailyReportMarkerPath)) return null
@@ -105,7 +87,6 @@ function getLastDailyReportDate() {
     return null
   }
 }
-
 function setLastDailyReportDate(dateKey) {
   try {
     fs.writeFileSync(dailyReportMarkerPath, dateKey, 'utf8')
@@ -113,17 +94,14 @@ function setLastDailyReportDate(dateKey) {
     console.error('[S-1] No se pudo guardar marca diaria:', err?.message || err)
   }
 }
-
 function safeString(value, fallback = '') {
   if (value === null || value === undefined) return fallback
   if (typeof value === 'string') return value
   return String(value)
 }
-
 function normalizeStatus(value) {
   return safeString(value).trim().toLowerCase()
 }
-
 function normalizeJobNameForRule(value) {
   return safeString(value)
     .normalize('NFD')
@@ -132,18 +110,14 @@ function normalizeJobNameForRule(value) {
     .trim()
     .toUpperCase()
 }
-
 function isWeekendOperationalWindow(windowStartDate) {
   const d = windowStartDate instanceof Date ? windowStartDate : new Date(windowStartDate)
   if (Number.isNaN(d.getTime())) return false
-
   const day = d.getDay()
   return day === 0 || day === 6
 }
-
 function isAs400PrRrWeekendExcluded(row) {
   const name = normalizeJobNameForRule(row?.jobName || row?.name || row?.title)
-
   return (
     name === 'BACKUP PR' ||
     name === 'BACKUP RR' ||
@@ -151,49 +125,37 @@ function isAs400PrRrWeekendExcluded(row) {
     name === 'BACKUP AS400 RR'
   )
 }
-
 function isDdvePhysicalChildDuplicate(row) {
   const rawName = safeString(row?.jobName || row?.name || row?.title).trim()
   const name = normalizeJobNameForRule(rawName)
-
   const dcoMain = 'DDVE-DCO FISICA - MENSUAL - DIA 29'
   const ticMain = 'DDVE-TIC FISICA - MENSUAL - DIA 29'
-
   const isDcoChild =
     name === `${dcoMain} - DDVE-DCO` ||
     name === `${dcoMain} - DDVE DCO`
-
   const isTicChild =
     name === `${ticMain} - DDVE-TIC` ||
     name === `${ticMain} - DDVE TIC`
-
   return isDcoChild || isTicChild
 }
-
 function stripTrailingIpFromJobName(name) {
   return String(name || '')
     .replace(/\s+-\s+\d{1,3}(?:\.\d{1,3}){3}\s*$/g, '')
     .trim()
 }
-
 function dedupeVeeamParentChildIpRows(rows) {
   const list = Array.isArray(rows) ? rows : []
-
   const originalNames = new Set(
     list
       .map((r) => String(r?.name || r?.jobName || r?.JobName || r?.title || '').trim())
       .filter(Boolean)
   )
-
   const result = []
   const seen = new Set()
-
   for (const row of list) {
     const rawName = String(row?.name || row?.jobName || row?.JobName || row?.title || '').trim()
     const baseName = stripTrailingIpFromJobName(rawName)
-
     const hasTrailingIp = rawName !== baseName
-
     // Si existe el job padre sin IP, descartamos la fila hija con IP.
     // Ejemplo:
     //   Padre: QRADAR-HCI - VM - MENSUAL - DIA 02
@@ -201,17 +163,14 @@ function dedupeVeeamParentChildIpRows(rows) {
     if (hasTrailingIp && originalNames.has(baseName)) {
       continue
     }
-
     const key = [
       baseName.toUpperCase(),
       String(row?.source || row?.fuente || row?.type || '').toUpperCase(),
       String(row?.status || row?.estado || '').toUpperCase(),
     ].join('|')
-
     if (seen.has(key)) {
       continue
     }
-
     seen.add(key)
     result.push({
       ...row,
@@ -219,35 +178,26 @@ function dedupeVeeamParentChildIpRows(rows) {
       name: row?.name || row?.jobName || row?.title || baseName,
     })
   }
-
   return result
 }
-
 function filterDashboardRows(rows, windowStartDate) {
   const weekendWindow = isWeekendOperationalWindow(windowStartDate)
-
   return (Array.isArray(rows) ? rows : []).filter((row) => {
     const status = normalizeStatus(row.status)
-
     if (status === 'no-run' || status === 'idle') {
       return false
     }
-
     if (isDdvePhysicalChildDuplicate(row)) {
       return false
     }
-
     if (weekendWindow && isAs400PrRrWeekendExcluded(row)) {
       return false
     }
-
     return true
   })
 }
-
 function formatBackupDateFromWindow(windowStartIso) {
   const d = new Date(windowStartIso)
-
   if (Number.isNaN(d.getTime())) {
     return new Date().toLocaleDateString('es-ES', {
       day: '2-digit',
@@ -255,21 +205,17 @@ function formatBackupDateFromWindow(windowStartIso) {
       year: 'numeric',
     }).toUpperCase()
   }
-
   return d.toLocaleDateString('es-ES', {
     day: '2-digit',
     month: 'long',
     year: 'numeric',
   }).toUpperCase()
 }
-
 function normalizeB2Status(row) {
   return normalizeStatus(row?.status || row?.state)
 }
-
 function getGlobalState(row) {
   const rawStatus = normalizeB2Status(row)
-
   if (
     rawStatus === 'no-run' ||
     rawStatus === 'no_run' ||
@@ -277,13 +223,10 @@ function getGlobalState(row) {
   ) {
     return 'NO-RUN'
   }
-
   if (rawStatus === 'success') return 'SUCCESS'
-
   if (rawStatus === 'warning' || rawStatus === 'warn') {
     return 'WARNING'
   }
-
   if (
     rawStatus === 'error' ||
     rawStatus === 'failed' ||
@@ -291,15 +234,12 @@ function getGlobalState(row) {
   ) {
     return 'ERROR'
   }
-
   // B-2: running + pending se unifican como EN CURSO
   if (rawStatus === 'running' || rawStatus === 'pending') {
     return 'RUNNING'
   }
-
   return 'UNKNOWN'
 }
-
 function getProgressValue(row) {
   const candidates = [
     row?.progress,
@@ -308,17 +248,14 @@ function getProgressValue(row) {
     row?.progressPct,
     row?.completionPercent,
   ]
-
   for (const value of candidates) {
     if (value !== undefined && value !== null && value !== '') {
       const n = Number(String(value).replace('%', '').trim())
       if (Number.isFinite(n)) return Math.round(n)
     }
   }
-
   return null
 }
-
 function detectRowSource(row) {
   const value = String(
     row?.source ||
@@ -327,10 +264,8 @@ function detectRowSource(row) {
     row?.type ||
     ''
   ).toLowerCase()
-
   if (value.includes('as400') || value.includes('ibm')) return 'as400'
   if (value.includes('barracuda')) return 'barracuda'
-
   if (
     value.includes('vdc') ||
     value.includes('veeam data cloud') ||
@@ -338,7 +273,6 @@ function detectRowSource(row) {
   ) {
     return 'vdc'
   }
-
   if (
     value.includes('veeam') ||
     value.includes('sql') ||
@@ -346,14 +280,11 @@ function detectRowSource(row) {
   ) {
     return 'veeam'
   }
-
   return value
 }
-
 function buildSmartDetail(row) {
   const rawStatus = normalizeB2Status(row)
   const source = detectRowSource(row)
-
   if (
     rawStatus === 'no-run' ||
     rawStatus === 'no_run' ||
@@ -361,22 +292,18 @@ function buildSmartDetail(row) {
   ) {
     return 'Sin ejecución'
   }
-
   // Veeam SQL
   // Si viene de SQL/Veeam, significa que existe sesión en BBDD.
   // Por tanto, running y pending técnico se presentan como ejecución real.
   if (source === 'veeam' || source === 'sql') {
     if (rawStatus === 'running' || rawStatus === 'pending') {
       const progress = getProgressValue(row)
-
       if (progress !== null) {
         return `En ejecución (${progress}%)`
       }
-
       return 'En ejecución'
     }
   }
-
   // Jobs por email: AS400 / Barracuda / VDC
   if (
     source === 'as400' ||
@@ -388,24 +315,19 @@ function buildSmartDetail(row) {
       return 'Pendiente recepción'
     }
   }
-
   return row?.detail || row?.reason || row?.message || ''
 }
-
 function applyB2StateModel(row) {
   const globalState = getGlobalState(row)
   const detail = buildSmartDetail(row)
-
   return {
     ...row,
     globalState,
     detail,
   }
 }
-
 function getPayloadSummary(payload) {
   const rows = Array.isArray(payload?.fullRows) ? payload.fullRows : []
-
   const summary = {
     total: 0,
     success: 0,
@@ -417,18 +339,14 @@ function getPayloadSummary(payload) {
     noRun: 0,
     other: 0,
   }
-
   for (const row of rows) {
     const globalState = row?.globalState || getGlobalState(row)
     const status = normalizeStatus(row?.status)
-
     if (globalState === 'NO-RUN') {
       summary.noRun += 1
       continue
     }
-
     summary.total += 1
-
     if (globalState === 'SUCCESS') summary.success += 1
     else if (globalState === 'WARNING') summary.warning += 1
     else if (globalState === 'ERROR') {
@@ -441,13 +359,10 @@ function getPayloadSummary(payload) {
       summary.other += 1
     }
   }
-
   return summary
 }
-
 function sanitizeRowForFrontend(row) {
   if (!row || typeof row !== 'object') return row
-
   return {
     ...row,
     jobName: safeString(row.jobName || row.name || row.title || 'UNKNOWN', 'UNKNOWN'),
@@ -459,14 +374,11 @@ function sanitizeRowForFrontend(row) {
     type: safeString(row.type),
   }
 }
-
 function decorateLogAvailability(row) {
   if (!row || typeof row !== 'object') return row
-
   const jobName = safeString(row.jobName || row.name || row.title).toLowerCase()
   const source = safeString(row.source || row.type).toLowerCase()
   const reason = safeString(row.reason || row.detail).toLowerCase()
-
   const hasEmailEvidence = Boolean(
     row.lastEmailDate ||
     row.emailReceivedDate ||
@@ -476,12 +388,10 @@ function decorateLogAvailability(row) {
     row.emailId ||
     row.internetMessageId
   )
-
   const hasTextualEmailLog =
     reason.includes('correo recibido') ||
     reason.includes('revisar manualmente el log') ||
     reason.includes('log')
-
   const isKnownEmailJob =
     source.includes('as400') ||
     source.includes('vdc') ||
@@ -491,7 +401,6 @@ function decorateLogAvailability(row) {
     jobName.includes('backup sdb') ||
     jobName.includes('sdb/tgt') ||
     jobName.includes('backup sdb/tgt')
-
   const hasLog = Boolean(
     row.hasLog ||
     row.logAvailable ||
@@ -506,9 +415,7 @@ function decorateLogAvailability(row) {
     hasTextualEmailLog ||
     isKnownEmailJob
   )
-
   if (!hasLog) return row
-
   return {
     ...row,
     hasLog: true,
@@ -519,34 +426,25 @@ function decorateLogAvailability(row) {
     logIcon: true,
   }
 }
-
 // ─── Motor de refresco ──────────────────────────────────────────────────────
-
 async function buildRefreshPayloadForWindow(cfg, inicio, fin, includeSql = true) {
   const ahora = new Date()
   const rawOverrides = cfg?.manualOverrides || {}
   const criticalityByJob = cfg?.criticalityByJob || {}
-
   function parseDateFlexible(value) {
     if (!value) return null
-
     if (value instanceof Date) {
       return Number.isNaN(value.getTime()) ? null : value
     }
-
     let d = new Date(value)
-
     if (!Number.isNaN(d.getTime())) {
       return d
     }
-
     if (typeof value === 'string') {
       const s = value.trim()
       const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?$/)
-
       if (m) {
         const [, dd, mm, yyyy, hh, mi, ss] = m
-
         d = new Date(
           Number(yyyy),
           Number(mm) - 1,
@@ -555,26 +453,20 @@ async function buildRefreshPayloadForWindow(cfg, inicio, fin, includeSql = true)
           Number(mi),
           Number(ss || 0)
         )
-
         if (!Number.isNaN(d.getTime())) {
           return d
         }
       }
     }
-
     return null
   }
-
   function isSameWindow(date) {
     const d = parseDateFlexible(date)
     if (!d) return false
-
     return d >= inicio && d < fin
   }
-
   function getOverrideDate(override) {
     if (!override || typeof override !== 'object') return null
-
     return (
       override.updatedAt ||
       override.updated ||
@@ -587,32 +479,23 @@ async function buildRefreshPayloadForWindow(cfg, inicio, fin, includeSql = true)
       null
     )
   }
-
   function filterManualOverridesForWindow(overrides) {
     const filtered = {}
-
     for (const [jobName, override] of Object.entries(overrides || {})) {
       const overrideDate = getOverrideDate(override)
-
       if (!isSameWindow(overrideDate)) continue
-
       filtered[jobName] = override
     }
-
     return filtered
   }
-
   const overrides = filterManualOverridesForWindow(rawOverrides)
-
   const [emails, sessions] = await Promise.all([
     cfg?.graph?.tenantId ? getEmailsInRange(cfg, inicio, fin) : Promise.resolve([]),
     includeSql && cfg?.sql ? sqlGetSessionsInRange(cfg.sql, inicio, fin) : Promise.resolve([]),
   ])
-
   const vdcRules = Array.isArray(cfg?.veeamDataCloudRules) ? cfg.veeamDataCloudRules : []
   const barracudaRules = Array.isArray(cfg?.barracudaRules) ? cfg.barracudaRules : []
   const as400Rules = Array.isArray(cfg?.as400Rules) ? cfg.as400Rules : []
-
   const { fullRows: sqlFullRows } = processSessions(
     sessions || [],
     emails || [],
@@ -620,7 +503,6 @@ async function buildRefreshPayloadForWindow(cfg, inicio, fin, includeSql = true)
     overrides,
     criticalityByJob
   )
-
   const vdcRows = (
     await buildVdcRows(
       vdcRules,
@@ -637,7 +519,6 @@ async function buildRefreshPayloadForWindow(cfg, inicio, fin, includeSql = true)
     category: 'vdc',
     type: 'vdc',
   }))
-
   const barraRows = (
     await buildBarracudaRows(
       barracudaRules,
@@ -654,7 +535,6 @@ async function buildRefreshPayloadForWindow(cfg, inicio, fin, includeSql = true)
     category: 'barracuda',
     type: 'barracuda',
   }))
-
   const as400Rows = (
     await buildAs400Rows(
       as400Rules,
@@ -670,7 +550,6 @@ async function buildRefreshPayloadForWindow(cfg, inicio, fin, includeSql = true)
     category: 'as400',
     type: 'as400',
   }))
-
   console.log('[REFRESH:ROWS]', {
     sqlRows: Array.isArray(sqlFullRows) ? sqlFullRows.length : 0,
     vdcRules: vdcRules.length,
@@ -681,10 +560,8 @@ async function buildRefreshPayloadForWindow(cfg, inicio, fin, includeSql = true)
     as400Rows: as400Rows.length,
     emails: Array.isArray(emails) ? emails.length : 0,
   })
-
   function cleanRow(row) {
     row = sanitizeRowForFrontend(decorateLogAvailability(row))
-
     const evidenceDates = [
       row.lastRun,
       row.start,
@@ -694,9 +571,7 @@ async function buildRefreshPayloadForWindow(cfg, inicio, fin, includeSql = true)
       row.receivedDateTime,
       row.email?.receivedDateTime,
     ]
-
     const hasEvidenceInWindow = evidenceDates.some(isSameWindow)
-
     if (!hasEvidenceInWindow) {
       return sanitizeRowForFrontend(decorateLogAvailability({
         ...row,
@@ -711,29 +586,22 @@ async function buildRefreshPayloadForWindow(cfg, inicio, fin, includeSql = true)
         endTimeDisplay: '',
       }))
     }
-
     return sanitizeRowForFrontend(decorateLogAvailability(row))
   }
-
   function applyManualOverrideFinal(row) {
     row = sanitizeRowForFrontend(decorateLogAvailability(row))
-
     const ov = row?.jobName ? overrides?.[row.jobName] : null
     if (!ov) return row
-
     const manualStatus = ov.status ? safeString(ov.status).trim().toLowerCase() : ''
     const manualComment = ov.comment ? safeString(ov.comment).trim() : ''
-
     return sanitizeRowForFrontend(decorateLogAvailability({
       ...row,
       ...(manualStatus ? { status: manualStatus } : {}),
       ...(manualComment ? { reason: manualComment, detail: manualComment } : {}),
     }))
   }
-
   function applyWeekendNoRunForAs400(row) {
     row = sanitizeRowForFrontend(decorateLogAvailability(row))
-
     if (isWeekendOperationalWindow(inicio) && isAs400PrRrWeekendExcluded(row)) {
       return sanitizeRowForFrontend(decorateLogAvailability({
         ...row,
@@ -749,29 +617,22 @@ async function buildRefreshPayloadForWindow(cfg, inicio, fin, includeSql = true)
         endTimeDisplay: '',
       }))
     }
-
     return row
   }
-
   // Catalogo fijo AS400/email:
   // Los jobs definidos en cfg.as400Rules deben existir siempre en Directorio de Jobs.
   // No se inyectan como SQL porque su historico depende de reglas AS400/email.
-
   const existingAs400JobNames = new Set(
     (Array.isArray(as400Rows) ? as400Rows : []).map((r) => {
       return safeString(r && (r.jobName || r.name || r.title)).toUpperCase().trim()
     })
   )
-
   function ensureAs400CatalogFromRules() {
     const rules = Array.isArray(cfg && cfg.as400Rules) ? cfg.as400Rules : []
-
     rules.forEach((rule) => {
       const jobName = safeString(rule && (rule.title || rule.name)).trim()
       const key = jobName.toUpperCase()
-
       if (!key || existingAs400JobNames.has(key)) return
-
       as400Rows.push({
         jobName,
         name: jobName,
@@ -793,35 +654,27 @@ async function buildRefreshPayloadForWindow(cfg, inicio, fin, includeSql = true)
         canOpenLog: true,
         logIcon: true,
       })
-
       existingAs400JobNames.add(key)
     })
   }
-
   ensureAs400CatalogFromRules()
-
   // Catálogo obligatorio AS400
   const forcedAs400Jobs = ['Backup AS400 SD', 'Backup AS400 PR', 'Backup AS400 RR', 'Backup AS400 SDB/TGT']
-
   forcedAs400Jobs.forEach((jobName) => {
     const key = jobName.toUpperCase()
     const normalizedName = normalizeJobNameForRule(jobName)
     const isPrRr = normalizedName === 'BACKUP PR' || normalizedName === 'BACKUP RR'
     const weekendWindow = isWeekendOperationalWindow(inicio)
-
     if (existingAs400JobNames.has(key)) return
-
     as400Rows.push({
       jobName,
       name: jobName,
       source: 'as400',
       type: 'as400',
-
       // PR/RR en fin de semana existen para Directorio, pero no computan como pendientes.
       status: isPrRr && weekendWindow ? 'no-run' : 'pending',
       reason: isPrRr && weekendWindow ? 'Sin ejecución' : 'Pendiente recepción',
       detail: isPrRr && weekendWindow ? 'Sin ejecución' : 'Pendiente recepción',
-
       duration: '',
       durationMs: null,
       durationTrend: null,
@@ -835,10 +688,8 @@ async function buildRefreshPayloadForWindow(cfg, inicio, fin, includeSql = true)
       canOpenLog: true,
       logIcon: true,
     })
-
     existingAs400JobNames.add(key)
   })
-
   const rawFullRows = [...sqlFullRows, ...vdcRows, ...barraRows, ...as400Rows]
     .map(sanitizeRowForFrontend)
     .map(decorateLogAvailability)
@@ -850,26 +701,20 @@ async function buildRefreshPayloadForWindow(cfg, inicio, fin, includeSql = true)
     .sort((a, b) => {
       const aTime = new Date(a.nextRun || 0).getTime()
       const bTime = new Date(b.nextRun || 0).getTime()
-
       if (Number.isNaN(aTime) && Number.isNaN(bTime)) {
         return safeString(a.jobName).localeCompare(safeString(b.jobName), 'es')
       }
-
       if (Number.isNaN(aTime)) return 1
       if (Number.isNaN(bTime)) return -1
-
       return bTime - aTime
     })
-
   // Dedupe global antes de KPIs/dashboard/email/export.
   // Evita duplicados tipo:
   // QRADAR-HCI - VM - MENSUAL - DIA 02
   // QRADAR-HCI - VM - MENSUAL - DIA 02 - 172.29.5.108
   const fullRows = dedupeVeeamParentChildIpRows(rawFullRows)
-
   // SOLO para dashboard
   const dashboardRows = filterDashboardRows(fullRows, inicio)
-
   return {
     ok: true,
     ts: ahora.toISOString(),
@@ -882,32 +727,25 @@ async function buildRefreshPayloadForWindow(cfg, inicio, fin, includeSql = true)
     fullRows,
   }
 }
-
 async function runRefresh() {
   const cfg = loadConfig()
   const hasSql = !!cfg?.sql
   const hasGraph = !!cfg?.graph?.tenantId
-
   if (!hasSql && !hasGraph) {
     console.error('[REFRESH] Falta configuracion SQL o Graph.')
     return { ok: false, error: 'Falta configuracion SQL o Graph.' }
   }
-
   try {
     const { inicio, fin } = getOperationalWindow(new Date())
     const payload = await buildRefreshPayloadForWindow(cfg, inicio, fin, hasSql)
-
     lastPayload = payload
     lastRefreshTime = new Date().toISOString()
-
     try {
       const jsonPath = process.env.BM_JSON_EXPORT_PATH || 'C:\\DashboardBackups\\backup_status.json'
       const folderPath = path.dirname(jsonPath)
-
       if (!fs.existsSync(folderPath)) {
         fs.mkdirSync(folderPath, { recursive: true })
       }
-
       const datosParaMovil = payload.fullRows.map((r) => ({
         backup_policy_name: r.jobName,
         status: r.globalState || r.status,
@@ -921,7 +759,6 @@ async function runRefresh() {
         criticality: r.criticality,
         source: r.source,
       }))
-
       fs.writeFileSync(jsonPath, JSON.stringify(datosParaMovil, null, 4), 'utf8')
       fs.writeFileSync(
         path.join(folderPath, 'motor_status.txt'),
@@ -933,67 +770,49 @@ async function runRefresh() {
         message: exportErr?.message || String(exportErr),
       })
     }
-
     const summary = getPayloadSummary(payload)
-
     console.log(
       `[REFRESH] OK — total=${summary.total}, ok=${summary.success}, avisos=${summary.warning}, errores=${summary.failed + summary.error}, enCurso=${summary.running}, noRun=${summary.noRun}, pendingTecnico=${summary.pending}, ${new Date().toLocaleTimeString()}`
     )
-
     return payload
   } catch (e) {
     logGraphError('RUN_REFRESH_ERROR', {
       message: e?.message || String(e),
     })
-
     console.error('[REFRESH] ERROR:', e.message)
     return { ok: false, error: e.message }
   }
 }
-
 function startRefreshTimer(minutes) {
   if (refreshIntervalId) clearInterval(refreshIntervalId)
-
   const ms = Math.max(1, Number(minutes ?? 5)) * 60 * 1000
   refreshIntervalId = setInterval(() => runRefresh(), ms)
-
   console.log(`[TIMER] Refresh cada ${Math.round(ms / 60000)} minutos`)
 }
-
 // ─── S-1: Envio automatico diario ───────────────────────────────────────────
-
 async function sendDailyReport() {
   try {
     console.log('[S-1] Generando informe diario...')
     console.log('[S-1] ENV BM_DAILY_REPORT_TO:', JSON.stringify(process.env.BM_DAILY_REPORT_TO))
-
     const cfg = loadConfig()
     const hasSql = !!cfg?.sql
     const hasGraph = !!cfg?.graph?.tenantId
-
     if (!hasSql && !hasGraph) {
       console.log('[S-1] No se pudo generar informe: falta configuracion SQL o Graph')
       return false
     }
-
     console.log('[S-1] Forzando refresh previo al envio para sincronizar correo y dashboard...')
-
     const freshPayload = await runRefresh()
-
     if (!freshPayload?.ok || !Array.isArray(freshPayload.fullRows)) {
       console.log('[S-1] No se pudo generar informe: refresh previo no devolvio payload valido')
       return false
     }
-
     const data = lastPayload
-
     if (!data || !Array.isArray(data.fullRows)) {
       console.log('[S-1] Payload no valido despues del refresh previo')
       return false
     }
-
     const summary = getPayloadSummary(data)
-
     console.log('[S-1] Snapshot usado para email:')
     console.log('[S-1]   windowStart:', data.windowStart)
     console.log('[S-1]   windowEnd  :', data.windowEnd)
@@ -1001,7 +820,6 @@ async function sendDailyReport() {
     console.log(
       `[S-1]   resumen    : total=${summary.total}, ok=${summary.success}, avisos=${summary.warning}, errores=${summary.failed + summary.error}, enCurso=${summary.running}, noRun=${summary.noRun}, pendingTecnico=${summary.pending}, other=${summary.other}`
     )
-
     // Prioridad (S-5): la configuracion grafica (cfg.dailyReport) manda
     // siempre que tenga destinatarios definidos. BM_DAILY_REPORT_TO queda
     // como fallback de compatibilidad si aun no se ha configurado nada
@@ -1010,37 +828,25 @@ async function sendDailyReport() {
     const fromCfg = cfg?.dailyReport?.recipients
     const fromCfgCc = cfg?.dailyReport?.cc
     const fromCfgBcc = cfg?.dailyReport?.bcc
-
     console.log('[S-1] fromEnv:', JSON.stringify(fromEnv))
     console.log('[S-1] fromCfg:', JSON.stringify(fromCfg))
-
     const joinList = (value) => (Array.isArray(value) ? value.join(';') : String(value || '').trim())
-
     const to = Array.isArray(fromCfg) && fromCfg.length
       ? joinList(fromCfg)
       : (String(fromCfg || '').trim() || fromEnv)
-
     const cc = joinList(fromCfgCc)
     const bcc = joinList(fromCfgBcc)
-
     console.log('[S-1] to final:', JSON.stringify(to))
-
     if (!to) {
       console.warn('[S-1] No hay destinatarios. Configuralos en Configuracion > Envio de correo, o define BM_DAILY_REPORT_TO')
       return false
     }
-
     console.log('[S-1] Destinatarios:', to, '| CC:', cc, '| CCO:', bcc)
-
     const backupDateStr = formatBackupDateFromWindow(data.windowStart)
     const subject = `Informe Backup ${backupDateStr}`
-
     console.log('[S-1] Subject:', subject)
-
     const bodyHtml = buildEmailHtml(data)
-
     console.log('[S-1] Llamando a sendGraphEmail...')
-
     await sendGraphEmail(cfg, {
       to,
       cc,
@@ -1048,13 +854,11 @@ async function sendDailyReport() {
       subject,
       bodyHtml,
     })
-
     console.log('[S-1] Correo enviado correctamente')
     return true
   } catch (err) {
     console.error('[S-1] Error enviando correo:', err?.message || err)
     console.error('[S-1] Stack:', err?.stack)
-
     try {
       logGraphError('DAILY_REPORT_ERROR', {
         message: err?.message || String(err),
@@ -1062,14 +866,11 @@ async function sendDailyReport() {
     } catch {
       // evitar romper por fallo en logging
     }
-
     return false
   }
 }
-
 function startDailyReportScheduler() {
   console.log('[S-1] Scheduler dinamico activo (dias/horas configurables desde Configuracion > Envio de correo)')
-
   // Comprobamos cada 20s para no perder ningun minuto configurado. Cada
   // combinacion "dia_HH:MM" solo se envia una vez, controlado por el marker
   // (antes solo guardaba la fecha; ahora guarda fecha+hora para soportar
@@ -1078,33 +879,25 @@ function startDailyReportScheduler() {
     const now = new Date()
     const cfg = loadConfig()
     const reportCfg = cfg?.dailyReport || {}
-
     const days = Array.isArray(reportCfg.days) && reportCfg.days.length
       ? reportCfg.days
       : [0, 1, 2, 3, 4, 5, 6]
     const times = Array.isArray(reportCfg.times) && reportCfg.times.length
       ? reportCfg.times
       : ['17:00']
-
     if (!days.includes(now.getDay())) return
-
     const hh = String(now.getHours()).padStart(2, '0')
     const mi = String(now.getMinutes()).padStart(2, '0')
     const currentTime = `${hh}:${mi}`
-
     if (!times.includes(currentTime)) return
     if (dailyReportRunning) return
-
     const today = getLocalDateKey(now)
     const sentKey = `${today}_${currentTime}`
     const lastSentKey = getLastDailyReportDate()
-
     if (lastSentKey === sentKey) {
       return
     }
-
     dailyReportRunning = true
-
     sendDailyReport()
       .then((ok) => {
         if (ok) {
@@ -1116,42 +909,31 @@ function startDailyReportScheduler() {
       })
   }, 20000)
 }
-
 // ─── Express App ────────────────────────────────────────────────────────────
-
 const app = express()
 app.use(express.json({ limit: '2mb' }))
-
 const distPath = path.join(__dirname, 'dist')
-
 if (fs.existsSync(distPath)) {
   app.use(express.static(distPath))
 } else {
   console.warn('⚠️  Carpeta dist/ no encontrada. Ejecuta "npm run build" primero.')
 }
-
 // ─── Middleware de autenticación ────────────────────────────────────────────
-
 async function authMiddleware(req, res, next) {
   if (!req.path.startsWith('/api/')) return next()
-
   const header = req.headers.authorization || ''
   const bearerToken = header.startsWith('Bearer ')
     ? header.slice(7).trim()
     : ''
-
   const queryToken = req.query?.token || ''
-
   console.log('[AUTH] req.path=', req.path,
     'hasBearer=', !!bearerToken,
     'bearerLen=', bearerToken.length)
-
   // 1) Token clásico
   if (AUTH_TOKEN && (bearerToken === AUTH_TOKEN || queryToken === AUTH_TOKEN)) {
     console.log('[AUTH] Token clásico OK')
     return next()
   }
-
   // 2) Entra ID
   try {
     if (bearerToken) {
@@ -1164,17 +946,13 @@ async function authMiddleware(req, res, next) {
     console.error('[AUTH] Entra verify error:',
       err?.name, '-', err?.message)
   }
-
   return res.status(401).json({
     ok: false,
     error: 'No autorizado',
   })
 }
-
 app.use(authMiddleware)
-
 // ─── API Endpoints ──────────────────────────────────────────────────────────
-
 app.get('/api/status', (_req, res) => {
   if (!lastPayload) {
     return res.json({
@@ -1182,13 +960,11 @@ app.get('/api/status', (_req, res) => {
       error: 'Aun no hay datos. Esperando primer refresh.',
     })
   }
-
   res.json({
     ...lastPayload,
     lastRefreshTime,
   })
 })
-
 app.post('/api/refresh', async (_req, res) => {
   try {
     const payload = await runRefresh()
@@ -1200,11 +976,29 @@ app.post('/api/refresh', async (_req, res) => {
     })
   }
 })
-
+// F-01 (pentest 28/08/2026, hallazgo critico): GET /api/config devolvia el
+// objeto de configuracion completo, incluyendo sql.password y
+// graph.clientSecret en texto plano, a cualquier cliente autenticado. Ahora
+// se sustituyen esos dos campos por un flag booleano (hasPassword /
+// hasClientSecret) que el frontend puede usar para saber si ya hay uno
+// guardado, sin exponer nunca su valor real por la red.
 app.get('/api/config', (_req, res) => {
   try {
     const cfg = loadConfig() || {}
-    res.json(cfg)
+    const safeCfg = {
+      ...cfg,
+      sql: cfg.sql ? {
+        ...cfg.sql,
+        password: undefined,
+        hasPassword: !!cfg.sql.password,
+      } : cfg.sql,
+      graph: cfg.graph ? {
+        ...cfg.graph,
+        clientSecret: undefined,
+        hasClientSecret: !!cfg.graph.clientSecret,
+      } : cfg.graph,
+    }
+    res.json(safeCfg)
   } catch (e) {
     res.status(500).json({
       ok: false,
@@ -1212,16 +1006,32 @@ app.get('/api/config', (_req, res) => {
     })
   }
 })
-
+// F-01 (pentest): como GET /api/config ya no envia sql.password ni
+// graph.clientSecret reales, si el formulario del frontend llega con esos
+// campos en blanco (porque el usuario no los ha tocado) NO se sobrescribe
+// el secreto ya guardado con una cadena vacia. Solo se actualiza si el
+// usuario ha escrito explicitamente un valor nuevo.
 app.post('/api/config', (req, res) => {
   try {
-    const ok = saveConfig(req.body || {})
-
+    const incoming = { ...(req.body || {}) }
+    const current = loadConfig() || {}
+    if (incoming.sql) {
+      const newPassword = String(incoming.sql.password || '').trim()
+      if (!newPassword && current.sql?.password) {
+        incoming.sql = { ...incoming.sql, password: current.sql.password }
+      }
+    }
+    if (incoming.graph) {
+      const newSecret = String(incoming.graph.clientSecret || '').trim()
+      if (!newSecret && current.graph?.clientSecret) {
+        incoming.graph = { ...incoming.graph, clientSecret: current.graph.clientSecret }
+      }
+    }
+    const ok = saveConfig(incoming)
     if (ok) {
       const cfg = loadConfig()
       startRefreshTimer(cfg?.refreshMinutes)
     }
-
     res.json({ ok })
   } catch (e) {
     res.status(500).json({
@@ -1230,7 +1040,6 @@ app.post('/api/config', (req, res) => {
     })
   }
 })
-
 app.post('/api/test/sql', async (req, res) => {
   try {
     await withTempSqlPool(req.body, async () => true)
@@ -1242,7 +1051,6 @@ app.post('/api/test/sql', async (req, res) => {
     })
   }
 })
-
 app.post('/api/test/graph', async (req, res) => {
   try {
     const emails = await getEmails({ graph: req.body })
@@ -1257,14 +1065,12 @@ app.post('/api/test/graph', async (req, res) => {
     })
   }
 })
-
 app.post('/api/sql/databases', async (req, res) => {
   try {
     const databases = await withTempSqlPool(req.body, async (pool) => {
       const result = await pool.request().query('SELECT name FROM sys.databases ORDER BY name')
       return result.recordset.map((r) => r.name)
     })
-
     res.json({
       ok: true,
       databases,
@@ -1276,14 +1082,12 @@ app.post('/api/sql/databases', async (req, res) => {
     })
   }
 })
-
 app.post('/api/sql/tables', async (req, res) => {
   try {
     const info = await withTempSqlPool(req.body, async (pool) => {
       const result = await pool.request().query('SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES ORDER BY TABLE_NAME')
       return result.recordset
     })
-
     res.json({
       ok: true,
       info,
@@ -1295,26 +1099,21 @@ app.post('/api/sql/tables', async (req, res) => {
     })
   }
 })
-
 app.post('/api/sql/columns', async (req, res) => {
   try {
     const { sqlCfg, tableName } = req.body
     const mssql = require('mssql')
-
     const columns = await withTempSqlPool(sqlCfg, async (pool) => {
       const r = pool.request()
       r.input('tableName', mssql.NVarChar, tableName)
-
       const result = await r.query(`
         SELECT COLUMN_NAME
         FROM INFORMATION_SCHEMA.COLUMNS
         WHERE TABLE_NAME = @tableName
         ORDER BY ORDINAL_POSITION
       `)
-
       return result.recordset.map((row) => row.COLUMN_NAME)
     })
-
     res.json({
       ok: true,
       columns,
@@ -1327,12 +1126,10 @@ app.post('/api/sql/columns', async (req, res) => {
     })
   }
 })
-
 app.post('/api/email/send', async (req, res) => {
   try {
     const cfg = loadConfig()
     await sendGraphEmail(cfg, req.body)
-
     res.json({ ok: true })
   } catch (e) {
     res.json({
@@ -1341,11 +1138,9 @@ app.post('/api/email/send', async (req, res) => {
     })
   }
 })
-
 app.post('/api/email/daily-report/test', async (_req, res) => {
   try {
     const ok = await sendDailyReport()
-
     res.json({
       ok,
       message: ok
@@ -1359,10 +1154,8 @@ app.post('/api/email/daily-report/test', async (_req, res) => {
     })
   }
 })
-
 app.get('/api/history/days', async (_req, res) => {
   const cfg = loadConfig()
-
   if (!cfg?.sql) {
     return res.json({
       ok: false,
@@ -1370,10 +1163,8 @@ app.get('/api/history/days', async (_req, res) => {
       days: [],
     })
   }
-
   try {
     const days = await sqlGetAvailableDays(cfg.sql)
-
     res.json({
       ok: true,
       days,
@@ -1386,27 +1177,21 @@ app.get('/api/history/days', async (_req, res) => {
     })
   }
 })
-
 app.get('/api/history/day/:dateStr', async (req, res) => {
   const cfg = loadConfig()
-
   if (!cfg?.sql) {
     return res.json({
       ok: false,
       error: 'Falta configuracion SQL.',
     })
   }
-
   try {
     const [year, month, day] = String(req.params.dateStr || '')
       .split('-')
       .map(Number)
-
     const inicio = new Date(year, month - 1, day, 18, 0, 0, 0)
     const fin = new Date(inicio.getTime() + 86400000)
-
     const payload = await buildRefreshPayloadForWindow(cfg, inicio, fin, true)
-
     res.json({
       ok: true,
       rows: payload.rows,
@@ -1421,10 +1206,8 @@ app.get('/api/history/day/:dateStr', async (req, res) => {
     })
   }
 })
-
 app.get('/api/schedule/30days', async (_req, res) => {
   const cfg = loadConfig()
-
   if (!cfg?.sql) {
     return res.json({
       ok: false,
@@ -1432,47 +1215,35 @@ app.get('/api/schedule/30days', async (_req, res) => {
       rows: [],
     })
   }
-
   try {
     const rawJobs = await sqlGetScheduleJobs(cfg.sql)
     const jobs = (Array.isArray(rawJobs) ? rawJobs : [])
       .filter((j) => j && typeof j === 'object' && j.name)
-
     const now = new Date()
     const primaryJobs = jobs.filter((j) => !isBackupCopyJob(j))
     const copyJobs = jobs.filter((j) => isBackupCopyJob(j))
     const primaryIndex = buildPrimaryJobIndex(primaryJobs)
     const primaryEntriesByName = new Map()
     const all = []
-
     for (const j of primaryJobs) {
       const xml = j.schedule_xml || ''
       const parsed = parseScheduleXml(xml, j.name)
-
       if (!parsed) continue
-
       const entries = expandSchedule30(j.name, xml, now)
       primaryEntriesByName.set(j.name, entries)
       all.push(...entries)
     }
-
     for (const copy of copyJobs) {
       const parent = findParentJobForCopy(copy, primaryJobs, primaryIndex)
-
       if (!parent) continue
-
       const inherited = cloneEntriesWithJobName(
         primaryEntriesByName.get(parent.name) || [],
         copy.name
       )
-
       if (!inherited.length) continue
-
       all.push(...inherited)
     }
-
     all.sort((a, b) => a.date.getTime() - b.date.getTime())
-
     res.json({
       ok: true,
       rows: all.map((r) => ({
@@ -1488,10 +1259,8 @@ app.get('/api/schedule/30days', async (_req, res) => {
     })
   }
 })
-
 app.get('/api/jobs/list', async (_req, res) => {
   const cfg = loadConfig()
-
   if (!cfg?.sql) {
     return res.json({
       ok: false,
@@ -1499,10 +1268,8 @@ app.get('/api/jobs/list', async (_req, res) => {
       jobs: [],
     })
   }
-
   try {
     const jobs = await sqlListJobs(cfg.sql)
-
     res.json({
       ok: true,
       jobs,
@@ -1515,27 +1282,21 @@ app.get('/api/jobs/list', async (_req, res) => {
     })
   }
 })
-
 app.get('/api/jobs/executions/:jobName', async (req, res) => {
   const cfg = loadConfig()
-
   try {
     const jobName = decodeURIComponent(req.params.jobName).trim()
-
     const allRules = [
       ...(Array.isArray(cfg?.veeamDataCloudRules) ? cfg.veeamDataCloudRules : []),
       ...(Array.isArray(cfg?.barracudaRules) ? cfg.barracudaRules : []),
       ...(Array.isArray(cfg?.as400Rules) ? cfg.as400Rules : []),
     ]
-
     const matchedRule = allRules.find((r) => {
       const title = String(r?.title || '').trim().toLowerCase()
       const name = String(r?.name || '').trim().toLowerCase()
       const target = String(jobName || '').trim().toLowerCase()
-
       return target === title || target === name
     })
-
     // El límite lo decide el servidor según el origen del job.
     // Si el frontend envía ?limit=, solo se respeta si es MENOR que el tope
     // del tipo de job; nunca puede ampliarlo ni recortar VB&R a 30.
@@ -1546,14 +1307,11 @@ app.get('/api/jobs/executions/:jobName', async (req, res) => {
       }
       return maxLimit
     }
-
     if (matchedRule) {
       // VDC / Barracuda / AS400 → 30 ejecuciones (ventana móvil, con relleno
       // "SIN EJECUCIÓN" en los días sin correo).
       const emailLimit = resolveLimit(HISTORY_LIMIT_EMAIL_JOBS)
-
       console.log('[HISTORIAL] job=', jobName, '| origen=email | limit=', emailLimit)
-
       const data = await getJobExecutionsFromEmailHistory(
         cfg,
         matchedRule,
@@ -1561,10 +1319,8 @@ app.get('/api/jobs/executions/:jobName', async (req, res) => {
         emailLimit,
         HISTORY_EMAIL_LOOKBACK_DAYS
       )
-
       return res.json(data)
     }
-
     if (!cfg?.sql) {
       return res.json({
         ok: false,
@@ -1572,12 +1328,9 @@ app.get('/api/jobs/executions/:jobName', async (req, res) => {
         executions: [],
       })
     }
-
     // VB&R (origen SQL) → 90 ejecuciones.
     const vbrLimit = resolveLimit(HISTORY_LIMIT_VBR_JOBS)
-
     console.log('[HISTORIAL] job=', jobName, '| origen=vbr/sql | limit=', vbrLimit)
-
     const data = await sqlGetJobExecutions(cfg.sql, jobName, vbrLimit)
     res.json(data)
   } catch (e) {
@@ -1588,10 +1341,8 @@ app.get('/api/jobs/executions/:jobName', async (req, res) => {
     })
   }
 })
-
 app.get('/api/jobs/executions', async (_req, res) => {
   const cfg = loadConfig()
-
   if (!cfg?.sql) {
     return res.json({
       ok: false,
@@ -1599,11 +1350,9 @@ app.get('/api/jobs/executions', async (_req, res) => {
       executions: [],
     })
   }
-
   try {
     const limit = Number(_req.query.limit) || 200
     const data = await sqlGetJobExecutions(cfg.sql, null, limit)
-
     res.json(data)
   } catch (e) {
     res.json({
@@ -1613,7 +1362,6 @@ app.get('/api/jobs/executions', async (_req, res) => {
     })
   }
 })
-
 app.get('/api/health', (_req, res) => {
   res.json({
     ok: true,
@@ -1627,7 +1375,6 @@ app.get('/api/health', (_req, res) => {
     windowEnd: lastPayload?.windowEnd || null,
   })
 })
-
 // SPA fallback
 app.use((req, res) => {
   if (req.path.startsWith('/api/')) {
@@ -1636,29 +1383,21 @@ app.use((req, res) => {
       error: 'Endpoint API no encontrado',
     })
   }
-
   const indexPath = path.join(distPath, 'index.html')
-
   if (fs.existsSync(indexPath)) {
     return res.sendFile(indexPath)
   }
-
   res.status(404).send('Build no encontrado. Ejecuta: npm run build')
 })
-
 // ─── Arranque ───────────────────────────────────────────────────────────────
-
 function startBackupMonitorRuntime() {
   const cfg = loadConfig()
-
   startRefreshTimer(cfg?.refreshMinutes)
   startDailyReportScheduler()
   runRefresh()
 }
-
 function startHttpFallback(reason) {
   console.warn('[HTTPS] Arrancando en HTTP fallback:', reason)
-
   app.listen(PORT, '0.0.0.0', () => {
     console.log('='.repeat(60))
     console.log('  BackupMonitor Server v5.1')
@@ -1666,28 +1405,22 @@ function startHttpFallback(reason) {
     console.log('  Motivo fallback: ' + reason)
     console.log('  Auth: ' + (AUTH_TOKEN ? 'Token configurado' : 'SIN AUTENTICACION'))
     console.log('='.repeat(60))
-
     startBackupMonitorRuntime()
   })
 }
-
 if (fs.existsSync(pfxPath)) {
   try {
     if (!pfxPassword) {
       throw new Error('BM_PFX_PASSWORD no definido o vacío')
     }
-
     console.log('[HTTPS] PFX path:', pfxPath)
     console.log('[HTTPS] PFX password definida:', pfxPassword ? 'SI' : 'NO')
     console.log('[HTTPS] PFX password length:', String(pfxPassword).length)
-
     const httpsOptions = {
       pfx: fs.readFileSync(pfxPath),
       passphrase: pfxPassword,
     }
-
     const httpsServer = https.createServer(httpsOptions, app)
-
     httpsServer.listen(HTTPS_PORT, '0.0.0.0', () => {
       console.log('='.repeat(60))
       console.log('  BackupMonitor Server v5.1')
@@ -1696,23 +1429,18 @@ if (fs.existsSync(pfxPath)) {
       console.log('  Modo: Express + HTTPS')
       console.log('  Auth: ' + (AUTH_TOKEN ? 'Token configurado' : 'SIN AUTENTICACION'))
       console.log('='.repeat(60))
-
       startBackupMonitorRuntime()
     })
-
     const httpRedirect = http.createServer((req, res) => {
       const host = (req.headers.host || '').split(':')[0]
       const target = HTTPS_PORT === 443
         ? 'https://' + host + req.url
         : 'https://' + host + ':' + HTTPS_PORT + req.url
-
       res.writeHead(301, {
         Location: target,
       })
-
       res.end()
     })
-
     httpRedirect.listen(HTTP_REDIRECT_PORT, '0.0.0.0', () => {
       console.log('  Redirect HTTP->HTTPS activo en puerto ' + HTTP_REDIRECT_PORT)
     })
@@ -1723,20 +1451,15 @@ if (fs.existsSync(pfxPath)) {
 } else {
   startHttpFallback('PFX no encontrado: ' + pfxPath)
 }
-
 // Cleanup
 process.on('SIGINT', async () => {
   console.log('\n[SHUTDOWN] Cerrando...')
-
   if (refreshIntervalId) clearInterval(refreshIntervalId)
-
   await closeCachedSqlPool()
   process.exit(0)
 })
-
 process.on('SIGTERM', async () => {
   if (refreshIntervalId) clearInterval(refreshIntervalId)
-
   await closeCachedSqlPool()
   process.exit(0)
 })
