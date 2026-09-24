@@ -1040,9 +1040,37 @@ app.post('/api/config', (req, res) => {
     })
   }
 })
+// F-01 (pentest): los botones "Probar conexión SQL / Listar bases de datos /
+// Listar tablas / Probar Microsoft Graph" del frontend envian el estado del
+// formulario (sql/graph) tal cual está en pantalla. Como GET /api/config ya
+// no manda sql.password ni graph.clientSecret reales (ver arriba), esos
+// campos llegan vacios en cuanto el usuario no los ha reescrito a mano. Sin
+// este fallback, cualquier prueba de conexion con credenciales ya guardadas
+// fallaria (Login failed / AADSTS7000216). Se completa aqui, en el propio
+// endpoint de test, con el secreto ya guardado en el servidor si el que
+// llega del formulario esta vacio -- nunca se envia el secreto real de
+// vuelta al navegador, solo se usa internamente para la prueba.
+function mergeSqlSecret(incomingSql) {
+  const cfg = loadConfig() || {}
+  const merged = { ...(incomingSql || {}) }
+  const newPassword = String(merged.password || '').trim()
+  if (!newPassword && cfg.sql?.password) {
+    merged.password = cfg.sql.password
+  }
+  return merged
+}
+function mergeGraphSecret(incomingGraph) {
+  const cfg = loadConfig() || {}
+  const merged = { ...(incomingGraph || {}) }
+  const newSecret = String(merged.clientSecret || '').trim()
+  if (!newSecret && cfg.graph?.clientSecret) {
+    merged.clientSecret = cfg.graph.clientSecret
+  }
+  return merged
+}
 app.post('/api/test/sql', async (req, res) => {
   try {
-    await withTempSqlPool(req.body, async () => true)
+    await withTempSqlPool(mergeSqlSecret(req.body), async () => true)
     res.json({ ok: true })
   } catch (e) {
     res.json({
@@ -1053,7 +1081,7 @@ app.post('/api/test/sql', async (req, res) => {
 })
 app.post('/api/test/graph', async (req, res) => {
   try {
-    const emails = await getEmails({ graph: req.body })
+    const emails = await getEmails({ graph: mergeGraphSecret(req.body) })
     res.json({
       ok: true,
       count: Array.isArray(emails) ? emails.length : 0,
@@ -1067,7 +1095,7 @@ app.post('/api/test/graph', async (req, res) => {
 })
 app.post('/api/sql/databases', async (req, res) => {
   try {
-    const databases = await withTempSqlPool(req.body, async (pool) => {
+    const databases = await withTempSqlPool(mergeSqlSecret(req.body), async (pool) => {
       const result = await pool.request().query('SELECT name FROM sys.databases ORDER BY name')
       return result.recordset.map((r) => r.name)
     })
@@ -1084,7 +1112,7 @@ app.post('/api/sql/databases', async (req, res) => {
 })
 app.post('/api/sql/tables', async (req, res) => {
   try {
-    const info = await withTempSqlPool(req.body, async (pool) => {
+    const info = await withTempSqlPool(mergeSqlSecret(req.body), async (pool) => {
       const result = await pool.request().query('SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES ORDER BY TABLE_NAME')
       return result.recordset
     })
@@ -1103,7 +1131,7 @@ app.post('/api/sql/columns', async (req, res) => {
   try {
     const { sqlCfg, tableName } = req.body
     const mssql = require('mssql')
-    const columns = await withTempSqlPool(sqlCfg, async (pool) => {
+    const columns = await withTempSqlPool(mergeSqlSecret(sqlCfg), async (pool) => {
       const r = pool.request()
       r.input('tableName', mssql.NVarChar, tableName)
       const result = await r.query(`
