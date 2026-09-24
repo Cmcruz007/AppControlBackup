@@ -911,6 +911,7 @@ function startDailyReportScheduler() {
 }
 // ─── Express App ────────────────────────────────────────────────────────────
 const app = express()
+app.disable('x-powered-by')
 app.use(express.json({ limit: '2mb' }))
 const distPath = path.join(__dirname, 'dist')
 if (fs.existsSync(distPath)) {
