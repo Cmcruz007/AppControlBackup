@@ -919,10 +919,12 @@ app.disable('x-powered-by')
 // para reducir la superficie de ataque (clickjacking, MIME sniffing,
 // downgrade a HTTP, inyección de recursos externos).
 app.use((req, res, next) => {
+  
   res.setHeader(
-    'Content-Security-Policy',
-    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
-  )
+  'Content-Security-Policy',
+  "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' https://login.microsoftonline.com https://*.login.microsoftonline.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+)
+
   res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
   res.setHeader('X-Frame-Options', 'DENY')
   res.setHeader('X-Content-Type-Options', 'nosniff')
