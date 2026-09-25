@@ -912,8 +912,28 @@ function startDailyReportScheduler() {
 // ─── Express App ────────────────────────────────────────────────────────────
 const app = express()
 app.disable('x-powered-by')
+
+// F-03 (pentest 28/08/2026, hallazgo alto): faltaban cabeceras HTTP de
+// seguridad (CSP, HSTS, X-Frame-Options, X-Content-Type-Options,
+// Referrer-Policy). Se añaden aquí manualmente, sin dependencias nuevas,
+// para reducir la superficie de ataque (clickjacking, MIME sniffing,
+// downgrade a HTTP, inyección de recursos externos).
+app.use((req, res, next) => {
+  res.setHeader(
+    'Content-Security-Policy',
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+  )
+  res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
+  res.setHeader('X-Frame-Options', 'DENY')
+  res.setHeader('X-Content-Type-Options', 'nosniff')
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin')
+  next()
+})
+
 app.use(express.json({ limit: '2mb' }))
+
 const distPath = path.join(__dirname, 'dist')
+
 if (fs.existsSync(distPath)) {
   app.use(express.static(distPath))
 } else {
