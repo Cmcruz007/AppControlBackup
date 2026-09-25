@@ -1159,8 +1159,12 @@ app.post('/api/sql/databases', async (req, res) => {
   }
 })
 app.post('/api/sql/tables', async (req, res) => {
+  const cfg = loadConfig() || {}
+  if (!cfg.sql) {
+    return res.json({ ok: false, error: 'Falta configuracion SQL.', info: [] })
+  }
   try {
-    const info = await withTempSqlPool(mergeSqlSecret(req.body), async (pool) => {
+    const info = await withTempSqlPool(cfg.sql, async (pool) => {
       const result = await pool.request().query('SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES ORDER BY TABLE_NAME')
       return result.recordset
     })
@@ -1175,11 +1179,16 @@ app.post('/api/sql/tables', async (req, res) => {
     })
   }
 })
+
 app.post('/api/sql/columns', async (req, res) => {
+  const cfg = loadConfig() || {}
+  if (!cfg.sql) {
+    return res.json({ ok: false, error: 'Falta configuracion SQL.', columns: [] })
+  }
   try {
-    const { sqlCfg, tableName } = req.body
+    const { tableName } = req.body
     const mssql = require('mssql')
-    const columns = await withTempSqlPool(mergeSqlSecret(sqlCfg), async (pool) => {
+    const columns = await withTempSqlPool(cfg.sql, async (pool) => {
       const r = pool.request()
       r.input('tableName', mssql.NVarChar, tableName)
       const result = await r.query(`
@@ -1202,6 +1211,7 @@ app.post('/api/sql/columns', async (req, res) => {
     })
   }
 })
+
 app.post('/api/email/send', async (req, res) => {
   try {
     const cfg = loadConfig()
