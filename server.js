@@ -1091,7 +1091,29 @@ function mergeGraphSecret(incomingGraph) {
   }
   return merged
 }
+
+// F-05 (pentest 28/08/2026, hallazgo medio): los endpoints de prueba
+// (/api/test/sql, /api/test/graph, /api/email/daily-report/test) quedan
+// desplegados en producción y accesibles para cualquier cuenta autenticada.
+// Se restringe su uso a una lista blanca de UPNs autorizados, configurable
+// por variable de entorno, sin eliminar la funcionalidad legítima que se
+// sigue usando puntualmente para verificar conexiones SQL/Graph.
+function isAuthorizedForTestEndpoints(req) {
+  const allowed = String(process.env.BM_TEST_ENDPOINTS_ALLOWED_UPNS || '')
+    .split(/[;,]/)
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean)
+  const upn = String(req.entraUser?.upn || req.entraUser?.unique_name || '').toLowerCase()
+  if (!allowed.length) {
+    return true
+  }
+  return allowed.includes(upn)
+}
+
 app.post('/api/test/sql', async (req, res) => {
+  if (!isAuthorizedForTestEndpoints(req)) {
+    return res.status(403).json({ ok: false, error: 'No autorizado para endpoints de prueba' })
+  }
   try {
     await withTempSqlPool(mergeSqlSecret(req.body), async () => true)
     res.json({ ok: true })
@@ -1103,6 +1125,9 @@ app.post('/api/test/sql', async (req, res) => {
   }
 })
 app.post('/api/test/graph', async (req, res) => {
+  if (!isAuthorizedForTestEndpoints(req)) {
+    return res.status(403).json({ ok: false, error: 'No autorizado para endpoints de prueba' })
+  }
   try {
     const emails = await getEmails({ graph: mergeGraphSecret(req.body) })
     res.json({
@@ -1190,6 +1215,9 @@ app.post('/api/email/send', async (req, res) => {
   }
 })
 app.post('/api/email/daily-report/test', async (_req, res) => {
+  if (!isAuthorizedForTestEndpoints(_req)) {
+    return res.status(403).json({ ok: false, error: 'No autorizado para endpoints de prueba' })
+  }
   try {
     const ok = await sendDailyReport()
     res.json({
