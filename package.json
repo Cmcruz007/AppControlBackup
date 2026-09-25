@@ -1,6 +1,6 @@
 {
   "name": "backup-monitor",
-  "version": "15.0.0",
+  "version": "16.0.0",
   "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite",

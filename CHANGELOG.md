@@ -1,5 +1,38 @@
 #### Changelog
 
+#### [16.0.0] - 2026-09-25
+
+##### 🔒 VERSIÓN MAYOR — SEGURIDAD
+- Remediación completa de 6 de los 7 hallazgos del pentest DORA realizado por Ciberseguridad (informe de Daniel Alves Lacambra, 28/08/2026) sobre Backup Monitor Pro v12.0. Corregidos, desplegados en producción y validados: F-01, F-02, F-03, F-05, F-06 y O-01. Pendiente únicamente F-04 (certificado TLS de backups.uci.com sin SAN adecuado), dependiente de Infraestructura/Sistemas.
+
+##### 🐛 CORREGIDO
+- **F-01 (Crítico) — Exposición de secretos vía GET /api/config**: el endpoint devolvía sql.password y graph.clientSecret en texto plano a cualquier cliente autenticado. Ahora solo expone los flags hasPassword/hasClientSecret. POST /api/config conserva el secreto guardado si el formulario llega vacío. Los endpoints de prueba SQL/Graph completan internamente el secreto guardado mediante mergeSqlSecret()/mergeGraphSecret(), sin devolverlo nunca al navegador.
+- **F-02 (Alto) — Persistencia de tokens MSAL en localStorage**: cache.cacheLocation en src/auth/authConfig.ts pasa de "localStorage" a "sessionStorage". Los tokens (AccessToken/IdToken/RefreshToken) dejan de persistir tras el cierre del navegador.
+- **F-03 (Alto) — Ausencia de cabeceras HTTP de seguridad**: añadidas manualmente en server.js (sin dependencias nuevas) Content-Security-Policy, Strict-Transport-Security, X-Frame-Options, X-Content-Type-Options y Referrer-Policy.
+- **F-05 (Medio) — Endpoints de prueba en producción**: /api/test/sql, /api/test/graph y /api/email/daily-report/test quedan protegidos mediante lista blanca de UPNs (variable de entorno BM_TEST_ENDPOINTS_ALLOWED_UPNS) a través de isAuthorizedForTestEndpoints(), manteniendo la funcionalidad para el personal autorizado.
+- **F-06 (Bajo) — Cabecera X-Powered-By expuesta**: añadido app.disable('x-powered-by') en server.js.
+- **O-01 (Observación) — Configuración SQL aceptada desde el cliente**: /api/sql/databases, /api/sql/tables y /api/sql/columns dejan de usar la configuración SQL enviada por el cliente (mergeSqlSecret(req.body)) y usan exclusivamente cfg.sql (configuración guardada en servidor) como única fuente de verdad. /api/sql/columns conserva únicamente tableName del body como parámetro funcional legítimo.
+
+##### ⚠️ INCIDENCIA Y HOTFIX DURANTE EL DESPLIEGUE
+- El primer despliegue de la CSP de F-03 (connect-src 'self') bloqueó silenciosamente el intercambio de token de Microsoft Entra ID al finalizar el login, dejando a todos los usuarios sin poder acceder a backups.uci.com ni a dashboard. Se restauró el servicio revirtiendo temporalmente server.js en DASHBOARD y se aplicó un hotfix ampliando connect-src para incluir https://login.microsoftonline.com y https://*.login.microsoftonline.com. Validado login completo (incluyendo MFA) tras el hotfix, sin errores de CSP en consola.
+
+##### 🔧 INTERNO
+- Fichero modificado principal: server.js (F-01, F-03, F-05, F-06, O-01).
+- Fichero modificado: src/auth/authConfig.ts (F-02).
+- Fichero modificado: src/pages/Settings.tsx (placeholders y avisos de secreto ya guardado, F-01).
+- Nueva variable de entorno en NSSM (DASHBOARD): BM_TEST_ENDPOINTS_ALLOWED_UPNS.
+
+##### ✅ VALIDADO
+- F-01: GET /api/config sin secretos; pruebas de conexión SQL/Graph operativas.
+- F-02: tokens MSAL ausentes de Local Storage y presentes en Session Storage; login Entra ID sin regresiones.
+- F-03: las 5 cabeceras de seguridad presentes en producción; login completo funcional tras el hotfix.
+- F-05: cuenta autorizada (CRUZP) mantiene funcionalidad; cuenta no autorizada (UGBACKUP) recibe 403.
+- F-06: cabecera X-Powered-By ausente en producción.
+- O-01: "Listar bases de datos" y "Listar tablas" siguen devolviendo los resultados reales de SQLCRMCLU pese a que el frontend continúa enviando la configuración de conexión en el body.
+
+##### ⚠️ PENDIENTE CONOCIDO
+- F-04: certificado TLS de backups.uci.com sin SAN adecuado. Depende de Infraestructura/Sistemas; no requiere cambios de código.
+
 ### [15.0.0] - 2026-09-23
 
 #### 🚀 AÑADIDO
